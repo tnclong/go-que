@@ -1,0 +1,15 @@
+db: # ref: https://golang.org/pkg/database/sql/#DB
+  driver: postgres # postgres
+  source: postgres://myuser:mypassword@127.0.0.1:5432/mydb?sslmode=disable
+  connMaxLifetime: 100s
+  maxOpenConns: 80
+  maxIdleConns: 50
+enqueue:
+  concurrent: 10
+  count: 10000
+  argsByteSize: 50
+worker: # see WorkerOptions
+  maxLockPerSecond: 20
+  maxBufferJobsCount: 200
+  maxPerformPerSecond: 2000
+  maxConcurrentPerformCount: 100

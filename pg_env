@@ -1,0 +1,2 @@
+export QUE_DB_DRIVER="postgres"
+export QUE_DB_SOURCE="postgres://myuser:mypassword@127.0.0.1:5432/mydb?sslmode=disable"
