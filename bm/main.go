@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -23,6 +26,14 @@ func main() {
 	parseFlags()
 	b := &Benchmark{Queue: randQueue()}
 	b.Configure(*cfile)
+
+	go func() {
+		runtime.SetMutexProfileFraction(1)
+		port := ":6060"
+		fmt.Println("pprof ListenAndServe:", port)
+		fmt.Println(http.ListenAndServe(port, nil))
+	}()
+
 	b.Run()
 	b.Summary()
 }
