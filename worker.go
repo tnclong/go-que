@@ -190,17 +190,19 @@ func (w *Worker) tryPerform(job Job) {
 	defer w.asProcessed(job.ID())
 
 	var err error
-	go func() {
+	defer func() {
 		e := recover()
 		if e != nil {
 			err = fmt.Errorf("%v", e)
 		}
 		if err != nil {
 			err2 := w.handleErr(job, err)
-			log.Printf(
-				"que: perform(job(%v)) with err %v but handle err with a new err %v",
-				job.ID(), err, err2,
-			)
+			if err2 != nil {
+				log.Printf(
+					"que: perform(job(%v)) with err %v but handle err with a new err %v",
+					job.ID(), err, err2,
+				)
+			}
 		}
 	}()
 	err = w.perform(w.performContext, job)
