@@ -31,7 +31,7 @@ If you use PostgreSQL:
 
 ```bash
 # Migrate database by your favorite tool on production
-docker exec -i go-que_postgres_1 psql -U myuser -d mydb < pg/migrate1.sql
+docker exec -i go-que_postgres_1 psql -U myuser -d mydb < pg/schema.sql
 source pg_env
 ```
 
