@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -619,7 +620,7 @@ var dbOnce sync.Once
 var _db *sql.DB
 var _driver string
 
-func newQueue(t *testing.T, queue string) que.Queue {
+func newQueue(t testing.TB, queue string) que.Queue {
 	dbOnce.Do(func() {
 		_driver = os.Getenv("QUE_DB_DRIVER")
 		source := os.Getenv("QUE_DB_SOURCE")
@@ -628,26 +629,32 @@ func newQueue(t *testing.T, queue string) que.Queue {
 			var err error
 			_db, err = sql.Open(_driver, source)
 			if err != nil {
-				t.Fatal(err)
+				panic(err)
 			}
 			err = _db.Ping()
 			if err != nil {
-				t.Fatal(err)
+				panic(err)
 			}
 		default:
-			t.Fatalf("unsupported driver: %q", _driver)
+			panic(fmt.Sprintf("unsupported driver: %q", _driver))
 		}
 	})
 
 	if queue == "" {
-		queue = randQueue(t)
-		t.Log("queue:", queue)
+		var err error
+		queue, err = randQueue()
+		if err != nil {
+			panic(err)
+		}
+		if t != nil {
+			t.Log("queue:", queue)
+		}
 	}
 	switch _driver {
 	case "postgres":
 		q, err := pg.New(_db, queue)
 		if err != nil {
-			t.Fatal(err)
+			panic(err)
 		}
 		return q
 	default:
@@ -655,17 +662,17 @@ func newQueue(t *testing.T, queue string) que.Queue {
 	}
 }
 
-func randQueue(t *testing.T) string {
+func randQueue() (string, error) {
 	const bufLen = 10
 	var buf [bufLen]byte
 	_, err := rand.Read(buf[:])
 	if err != nil {
-		t.Fatalf("rand queue with err: %v", err)
+		return "", err
 	}
 	var q [3 + 2*bufLen]byte
 	q[0] = 't'
 	q[1] = 't'
 	q[2] = '-'
 	hex.Encode(q[3:], buf[:])
-	return string(q[:])
+	return string(q[:]), nil
 }
