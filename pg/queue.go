@@ -58,18 +58,13 @@ func (q *queue) Close() error {
 	q.closed = true
 	if q.conn != nil {
 		err := q.conn.Raw(func(driverConn interface{}) error {
-			conn := driverConn.(driver.Conn)
-			err1 := conn.Close()
-			if err1 != nil {
-				return err1
-			}
 			return driver.ErrBadConn
 		})
 		if err != nil && err != driver.ErrBadConn {
 			return err
 		}
 		if err == nil {
-			err = errors.New("try to release connection failed by returns driver.ErrBadConn")
+			return errors.New("try to release connection failed by returns driver.ErrBadConn")
 		}
 		q.conn = nil
 	}
