@@ -12,7 +12,7 @@ func Stack(skip int) string {
 	pcs := callers(skip)
 	var b strings.Builder
 	for _, pc := range pcs {
-		pc = pc + 1
+		pc = pc - 1
 		fn := runtime.FuncForPC(pc)
 		if fn == nil {
 			b.WriteString("unknown")

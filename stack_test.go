@@ -5,15 +5,47 @@ import (
 	"testing"
 )
 
+type stackS struct{}
+
+func (ss *stackS) stackA() (s string) {
+	defer func() {
+		e := recover()
+		if e != nil {
+			s = Stack(3)
+		}
+	}()
+	ss.stackB()
+	return
+}
+
+func (*stackS) stackB() {
+	defer func() {
+		e := recover()
+		if e != nil {
+			panic(e)
+		}
+	}()
+	var i int
+	i++
+	i *= 5
+	panic(i)
+}
+
 func TestStack(t *testing.T) {
-	stack := Stack(3)
+	ss := &stackS{}
+	stack := ss.stackA()
 	t.Log(stack)
-	prefix := "github.com/tnclong/go-que.TestStack"
-	if !strings.HasPrefix(stack, prefix) {
-		t.Fatalf("want stack has prefix: %s", prefix)
+
+	stacks := []string{
+		"github.com/tnclong/go-que/stack_test.go:36",
+		"github.com/tnclong/go-que/stack_test.go:17",
+		"github.com/tnclong/go-que/stack_test.go:31",
+		"tnclong/go-que/stack_test.go:25",
+		"tnclong/go-que/stack_test.go:14",
 	}
-	stackCaller := "github.com/tnclong/go-que/stack_test.go:9"
-	if !strings.Contains(stack, stackCaller) {
-		t.Fatalf("want stack has caller: %s", stackCaller)
+	for _, s := range stacks {
+		if !strings.Contains(stack, s) {
+			t.Fatalf("want stack has caller: %s", s)
+		}
 	}
 }
