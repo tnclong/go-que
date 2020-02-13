@@ -3,7 +3,6 @@ package que
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 )
 
@@ -11,17 +10,12 @@ import (
 type Job interface {
 	// ID returns unique identity of job.
 	ID() int64
-	// Queue returns a string express of queue.
-	Queue() string
-	// Args returns json array encoded of user special arguments.
-	// Caller uses encoding/json to get real values of args.
-	Args() []byte
-	RunAt() time.Time
-
+	// Plan returns a copy of plan.
+	Plan() Plan
 	// RetryCount returns current retry count.
-	RetryCount() int
-	LastErrMsg() string
-	LastErrStack() string
+	RetryCount() int32
+	LastErrMsg() *string
+	LastErrStack() *string
 
 	// In sets underline method in tx.
 	// It is great benefit, we use database as a queue.
@@ -32,32 +26,51 @@ type Job interface {
 	Destroy(ctx context.Context) error
 	// Expire marks job as expired.
 	Expire(ctx context.Context) error
-	// RetryIn retries perform job after interval.
-	RetryIn(ctx context.Context, interval time.Duration, cerr error) error
+	// RetryAfter retries perform job after interval.
+	RetryAfter(ctx context.Context, interval time.Duration, cerr error) error
+	// RetryInPlan retries according to RetryPolicy of Plan.
+	// It executes Expire function when RetryCount() >= MaxRetryCount.
+	RetryInPlan(ctx context.Context, cerr error) error
+}
+
+// Plan is a series of parameters structure a new job.
+type Plan struct {
+	// Queue is a string express of queue.
+	Queue string
+
+	// Args is json array encoded of user specified arguments.
+	// args is a array even if only special zero/one argument.
+	// Uses helper method Args() for convenience.
+	//    que.Args(1, "2")
+	Args []byte
+	// RunAt represents when job will be performed.
+	RunAt time.Time
+
+	// RetryPolicy guides retry behavior when perform job failed.
+	RetryPolicy RetryPolicy
 }
 
 // Queue is a abstract interface.
 // It describes a set of methods that a database queue should implements.
 type Queue interface {
-	// Queue returns a string express of queue.
-	Queue() string
+	// Enqueue saves a set of jobs according to plans.
+	//
+	// If tx is not nil, saves new jobs in tx.
+	//
+	// ids are unique identities of saved jobs.
+	Enqueue(ctx context.Context, tx *sql.Tx, plans ...Plan) (ids []int64, err error)
 
-	// Enqueue saves a new job to queue(database).
-	//
-	// If tx is not nil, saves the new job in tx.
-	//
-	// runAt represents when job will be performed.
-	// args must be accepted by json.Marshal.
-	// args is a array even if only special zero/one argument.
-	//
-	// id is unique identity of saved job.
-	Enqueue(ctx context.Context, tx *sql.Tx, runAt time.Time, args ...interface{}) (id int64, err error)
+	Mutex() Mutex
+}
 
+// Mutex controls locks of performable jobs in database.
+// Mutex must Release after none use it.
+type Mutex interface {
 	// Lock locks a set of jobs in database.
-	// These jobs unable to lock by other queues until database connection break(closed)
+	// These jobs unable to lock by other mutex until database connection break(closed)
 	// or unlock them use Unlock.
 	// Lock not guarantee get count of jobs.
-	Lock(ctx context.Context, count int) ([]Job, error)
+	Lock(ctx context.Context, queue string, count int) ([]Job, error)
 	// Unlock unlocks jobs by given ids.
 	// - ErrNotLockedJobsInLocal
 	//    When unlock id not in local map.
@@ -65,20 +78,7 @@ type Queue interface {
 	//    When unlock ids not locked in database.
 	Unlock(ctx context.Context, ids []int64) error
 
-	// Close close queue and holded database connection.
-	// Close releases all locks that obtain by call Lock method.
-	// After Close returns, above method except Queue() returns ErrQueueAlreadyClosed.
-	Close() error
-}
-
-// CheckQueue checks queue is valid.
-// The length of queue must in [1,100].
-func CheckQueue(queue string) error {
-	if queue == "" {
-		return &ErrQueue{Queue: queue, Err: errors.New("queue must not be empty string")}
-	}
-	if len(queue) > 100 {
-		return &ErrQueue{Queue: queue, Err: errors.New("the length of queue greater than 100")}
-	}
-	return nil
+	// Release closes holded database connection and
+	// releases all locks that obtain by call Lock method.
+	Release() error
 }

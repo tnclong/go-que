@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -39,7 +40,8 @@ func main() {
 }
 
 type Benchmark struct {
-	Queue   string  `yaml:"-"`
+	Queue   string `yaml:"-"`
+	Mutex   que.Mutex
 	DB      DB      `yaml:"db"`
 	Enqueue Enqueue `yaml:"enqueue"`
 	Worker  Worker  `yaml:"worker"`
@@ -116,10 +118,12 @@ func (b *Benchmark) openDB() *sql.DB {
 }
 
 func (b *Benchmark) newQueue(db *sql.DB) que.Queue {
-	q, err := pg.New(db, b.Queue)
+	q, err := pg.New(db)
 	if err != nil {
-		log.Fatalf("pg.New(%s) with err: %v", b.Queue, err)
+		log.Fatalf("pg.New() with err: %v", err)
 	}
+	b.Mutex = q.Mutex()
+	b.Queue = randQueue()
 	fmt.Printf("using queue %q\n", b.Queue)
 	return q
 }
@@ -134,7 +138,11 @@ func (b *Benchmark) enqueue(q que.Queue, enqueueC <-chan int, metricC chan<- Lat
 					return
 				}
 				metric(metricC, func() {
-					_, err := q.Enqueue(context.Background(), nil, time.Now(), args...)
+					_, err := q.Enqueue(context.Background(), nil, que.Plan{
+						Queue: b.Queue,
+						RunAt: time.Now(),
+						Args:  que.Args(args),
+					})
 					if err != nil {
 						log.Fatalf("Enqueue with err: %v", err)
 					}
@@ -148,7 +156,8 @@ var performFirst sync.Once
 
 func (b *Benchmark) runWorker(q que.Queue, metricC chan<- Latency) *que.Worker {
 	worker, err := que.NewWorker(que.WorkerOptions{
-		Queue:              q,
+		Queue:              b.Queue,
+		Mutex:              b.Mutex,
 		MaxLockPerSecond:   b.Worker.MaxLockPerSecond,
 		MaxBufferJobsCount: b.Worker.MaxBufferJobsCount,
 		Perform: func(ctx context.Context, job que.Job) error {
@@ -157,7 +166,7 @@ func (b *Benchmark) runWorker(q que.Queue, metricC chan<- Latency) *que.Worker {
 			})
 
 			var err error
-			metricNow(job.RunAt(), metricC, func() {
+			metricNow(job.Plan().RunAt, metricC, func() {
 				err = job.Destroy(ctx)
 			})
 			return err
@@ -221,6 +230,10 @@ func (b *Benchmark) Run() {
 	err := worker.Stop(context.Background())
 	if err != nil {
 		log.Fatalf("Stop worker with err: %v", err)
+	}
+	err = b.Mutex.Release()
+	if err != nil {
+		log.Fatalf("Release mutex with err: %v", err)
 	}
 }
 
@@ -314,9 +327,9 @@ func randQueue() string {
 	return string(q[:])
 }
 
-func randArgs(size int) []interface{} {
+func randArgs(size int) []byte {
 	if size <= 0 {
-		return []interface{}{}
+		return nil
 	}
 	if size%2 == 1 {
 		size++
@@ -326,5 +339,9 @@ func randArgs(size int) []interface{} {
 	if err != nil {
 		log.Fatalf("rand args with err: %v", err)
 	}
-	return []interface{}{hex.EncodeToString(buf)}
+	data, err := json.Marshal([]interface{}{hex.EncodeToString(buf)})
+	if err != nil {
+		log.Fatalf("marshal args with err: %v", err)
+	}
+	return data
 }

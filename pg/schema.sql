@@ -11,6 +11,7 @@ create table goque_jobs
             check (jsonb_typeof(args) = 'array'::text),
 
     run_at               timestamp with time zone default now()       not null,
+    retry_policy         jsonb                                        not null,
     done_at              timestamp with time zone,
     expired_at           timestamp with time zone,
 

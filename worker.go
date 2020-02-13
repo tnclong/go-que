@@ -13,11 +13,14 @@ import (
 )
 
 // NewWorker creates a worker instance by given opts.
-// The Queue and Perform of opts are required.
+// The Queue, Mutex and Perform of opts are required.
 // Other options is set to a default value if they are invalid.
 func NewWorker(opts WorkerOptions) (*Worker, error) {
-	if opts.Queue == nil {
-		return nil, errors.New("queue must not be nil")
+	if opts.Queue == "" {
+		return nil, errors.New("queue must not be empty string")
+	}
+	if opts.Mutex == nil {
+		return nil, errors.New("mutex must not be nil")
 	}
 	if opts.Perform == nil {
 		return nil, errors.New("perform must not be nil")
@@ -42,13 +45,13 @@ func NewWorker(opts WorkerOptions) (*Worker, error) {
 
 	return &Worker{
 		queue:                     opts.Queue,
+		mutex:                     opts.Mutex,
 		performContext:            performContext,
 		perform:                   opts.Perform,
 		maxConcurrentPerformCount: opts.MaxConcurrentPerformCount,
 		lockLimiter:               newRateLimiter(opts.MaxLockPerSecond),
 		jobC:                      make(chan Job, count),
 		performLimiter:            newRateLimiter(opts.MaxPerformPerSecond),
-		performRetryPolicy:        opts.PerformRetryPolicy,
 		processed:                 make([]int64, 0, count),
 	}, nil
 }
@@ -61,7 +64,8 @@ func newRateLimiter(perSecond float64) *rate.Limiter {
 type WorkerOptions struct {
 	// A queue instance must only or not assign to a worker.
 	// When work stoped, inner queue is closed.
-	Queue Queue
+	Queue string
+	Mutex Mutex
 	// MaxLockPerSecond is maximum frequency calls Lock() of Queue.
 	// Lower number uses lower database cpu.
 	MaxLockPerSecond float64
@@ -83,25 +87,39 @@ type WorkerOptions struct {
 	MaxPerformPerSecond float64
 	// MaxConcurrentPerformCount is maximum goroutine of Perform execution.
 	MaxConcurrentPerformCount int
-	PerformRetryPolicy        RetryPolicy
 }
 
 // Worker locks jobs from Queue and executes Perform method according to given WorkerOptions.
 //
 // Run a worker:
 //
-//   w := NewWorker(opts)
-//   go func() {
-//       err := w.Run()
-//       log.Println(err)
-//   }()
+//    mutex := q.Mutex()
+//    w, err := que.NewWorker(que.WorkerOptions{
+//        Queue: "order.mail.register",
+//        Mutex: mutex,
+//        Perform: func(ctx context.Context, job que.Job) error {
+//            plan := job.Plan()
+//            args := decode(plan.Args)
+//            fmt.Println(args)
+//            // one of Done, Destroy, Expire, RetryAfter and RetryInPlan must be called.
+//            return job.Done(ctx)
+//        },
+//    })
+//    if err := w.Run(); err != nil {
+//        log.Println(err)
+//    }
 //
 // Reasonable quit worker execution:
 //
-//   err := w.Stop(ctx)
-//   log.Println(err)
+//    if err := w.Stop(context.Background()); err != nil {
+//        log.Println(err)
+//    }
+//    if err := mutex.Release(); err != nil {
+//        log.Println(err)
+//    }
 type Worker struct {
-	queue Queue
+	queue string
+	mutex Mutex
 
 	perform        func(context.Context, Job) error
 	performContext context.Context
@@ -138,10 +156,7 @@ func (w *Worker) Run() error {
 func (w *Worker) lock() (err error) {
 	defer func() {
 		if !w.isStopped() {
-			errs := new(MultiErr)
-			err2 := w.Stop(context.Background())
-			errs.Append(err2, err)
-			err = errs.Err()
+			w.Stop(context.Background())
 		}
 	}()
 	defer close(w.jobC)
@@ -154,7 +169,7 @@ func (w *Worker) lock() (err error) {
 		ongoingCount := int(atomic.LoadInt32(&w.ongoing))
 		lockCount := cap(w.jobC) - len(w.jobC) - ongoingCount
 		if lockCount > 0 {
-			jobs, err = w.queue.Lock(context.Background(), lockCount)
+			jobs, err = w.mutex.Lock(context.Background(), w.queue, lockCount)
 			if err != nil {
 				return err
 			}
@@ -209,12 +224,7 @@ func (w *Worker) tryPerform(job Job) {
 }
 
 func (w *Worker) handleErr(job Job, cerr error) error {
-	nextInterval, ok := w.performRetryPolicy.NextInterval(job.RetryCount())
-	if ok {
-		return job.RetryIn(context.Background(), nextInterval, cerr)
-	}
-
-	return job.Expire(context.Background())
+	return job.RetryInPlan(context.Background(), cerr)
 }
 
 func (w *Worker) asProcessed(id int64) {
@@ -234,7 +244,7 @@ func (w *Worker) unlockProcessed() error {
 	w.mux.Unlock()
 	var err error
 	if len(processed) > 0 {
-		err = w.queue.Unlock(context.Background(), processed)
+		err = w.mutex.Unlock(context.Background(), processed)
 	}
 	return err
 }
@@ -245,7 +255,6 @@ func (w *Worker) isStopped() bool {
 
 // Stop stops worker execution.
 // It blocks until ctx.Done() or all processing jobs done.
-// It also closes innner queue.
 func (w *Worker) Stop(ctx context.Context) error {
 	atomic.StoreInt32(&w.stopped, 1)
 
@@ -263,9 +272,5 @@ wait:
 		}
 	}
 
-	errs := new(MultiErr)
-	err1 := w.unlockProcessed()
-	err2 := w.queue.Close()
-	errs.Append(err1, err2)
-	return errs.Err()
+	return w.unlockProcessed()
 }
