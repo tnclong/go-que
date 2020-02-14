@@ -10,29 +10,29 @@ import (
 type RetryPolicy struct {
 	// InitialInterval is interval for the first retry.
 	// If NextIntervalMultiplier is 1.0 then it is used for all retries.
-	InitialInterval time.Duration
+	InitialInterval time.Duration `json:"initialInterval"`
 
 	// MaxInterval is max interval between adjacent tries.
 	// NextIntervalMultiplier leads to next interval increase.
 	// Default is 100x of InitialInterval.
-	MaxInterval time.Duration
+	MaxInterval time.Duration `json:"maxInterval"`
 	// NextIntervalMultiplier is a multiplicator used in calculating next interval.
 	// Must greater or equals to 1.0.
-	NextIntervalMultiplier float64
+	NextIntervalMultiplier float64 `json:"nextIntervalMultiplier"`
 	// IntervalRandomPercent gives interval a variation of ±(IntervalRandomPercent%).
 	// Must in [0,100]
-	IntervalRandomPercent uint8
+	IntervalRandomPercent uint8 `json:"intervalRandomPercent"`
 
 	// MaxRetryCount is max retry count.
 	// Job will try to exec again after a interval if set MaxRetryCount to 1.
 	// 0 is not retry
 	// < 0 is retry forever
-	MaxRetryCount int
+	MaxRetryCount int32 `json:"maxRetryCount"`
 }
 
 // NextInterval calculates next retry interval according to retryCount and RetryPolicy.
 // Caller must stop retry when get a false.
-func (rp RetryPolicy) NextInterval(retryCount int) (time.Duration, bool) {
+func (rp RetryPolicy) NextInterval(retryCount int32) (time.Duration, bool) {
 	if retryCount < 0 || (rp.MaxRetryCount >= 0 && retryCount >= rp.MaxRetryCount) {
 		return 0, false
 	}

@@ -6,10 +6,8 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"reflect"
@@ -23,20 +21,18 @@ import (
 	"github.com/tnclong/go-que/pg"
 )
 
-func TestQueue_Queue(t *testing.T) {
-	queue := "tt-queue"
-	q := newQueue(t, queue)
-	if q.Queue() != queue {
-		t.Fatalf("want queue is %s but get %s", queue, q.Queue())
-	}
-	err := q.Close()
+func TestRelease(t *testing.T) {
+	mu := newQueue().Mutex()
+	err := mu.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func TestQueue_EnqueueLockUnlock(t *testing.T) {
-	q := newQueue(t, "")
+func TestEnqueueLockUnlock(t *testing.T) {
+	q := newQueue()
+	mu := q.Mutex()
+	qs := randQueue()
 
 	type user struct {
 		Name string
@@ -44,19 +40,34 @@ func TestQueue_EnqueueLockUnlock(t *testing.T) {
 	runAt := time.Now()
 	amap := map[string]int{"1": 1}
 	astruct := user{Name: "name"}
-	id, err := q.Enqueue(
-		context.Background(), nil, runAt,
-		1, 2.0, math.MaxInt64, "text", true,
-		runAt, amap, astruct,
+	plan := que.Plan{
+		Queue: qs,
+		Args: que.Args(
+			1, 2.0, math.MaxInt64, "text", true,
+			runAt, amap, astruct,
+		),
+		RunAt: runAt,
+		RetryPolicy: que.RetryPolicy{
+			InitialInterval:        10 * time.Second,
+			MaxInterval:            20 * time.Second,
+			NextIntervalMultiplier: 2,
+			IntervalRandomPercent:  8,
+			MaxRetryCount:          3,
+		},
+	}
+	ids, err := q.Enqueue(
+		context.Background(), nil,
+		plan,
 	)
 	if err != nil {
 		t.Fatalf("Enqueue get err: %v", err)
 	}
-	if id <= 0 {
-		t.Fatalf("want id greater than zero but get %d", id)
+	if len(ids) == 0 || ids[0] <= 0 {
+		t.Fatalf("want id greater than zero but get %d", ids)
 	}
+	id := ids[0]
 
-	jobs, err := q.Lock(context.Background(), 1)
+	jobs, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatalf("Lock get err: %v", err)
 	}
@@ -67,108 +78,29 @@ func TestQueue_EnqueueLockUnlock(t *testing.T) {
 	if job.ID() != id {
 		t.Fatalf("want id is %d but get %d", id, job.ID())
 	}
-	if job.Queue() != q.Queue() {
-		t.Fatalf("want queue is %s but get %s", job.Queue(), q.Queue())
+
+	actualPlan := job.Plan()
+	if !plan.RunAt.Equal(actualPlan.RunAt) {
+		t.Fatalf("want run at is %s but get %s", plan.RunAt.String(), actualPlan.RunAt.String())
 	}
-	if !job.RunAt().Equal(runAt) {
-		t.Fatalf("want run at %s but get %s", job.RunAt().String(), runAt.String())
+	plan.RunAt = actualPlan.RunAt
+	actualPlan.Args = bytes.ReplaceAll(actualPlan.Args, []byte{' '}, nil)
+	if !reflect.DeepEqual(plan, actualPlan) {
+		t.Errorf("want plan is %#v but get %#v", plan, actualPlan)
+		t.Fatalf("want args is |%s| but get |%s|", plan.Args, actualPlan.Args)
 	}
+
 	if job.RetryCount() != 0 {
 		t.Fatalf("want retry count is 0 but get %d", job.RetryCount())
 	}
-	if job.LastErrMsg() != "" {
-		t.Fatalf("want last err msg is %q but get %q", "", job.LastErrMsg())
+	if job.LastErrMsg() != nil {
+		t.Fatalf("want last err msg is nil but get %q", *job.LastErrMsg())
 	}
-	if job.LastErrStack() != "" {
-		t.Fatalf("want last err stack is %q but get %q", "", job.LastErrStack())
-	}
-
-	argsBytes := job.Args()
-	enc := json.NewDecoder(bytes.NewReader(argsBytes))
-	tok, err := enc.Token()
-	if err != nil {
-		t.Fatal(err)
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		t.Fatalf("want a json.Delim but get %T(%v)", tok, tok)
-	}
-	if delim != '[' {
-		t.Fatalf("want %c but get %c", '[', delim)
-	}
-	var intv int // 0
-	if err = enc.Decode(&intv); err != nil {
-		t.Fatal(err)
-	}
-	if intv != 1 {
-		t.Fatalf("want 1 but get %d", intv)
-	}
-	var float64v float64 // 1
-	if err = enc.Decode(&float64v); err != nil {
-		t.Fatal(err)
-	}
-	if float64v != 2.0 {
-		t.Fatalf("want 2.0 but get %f", float64v)
-	}
-	var int64v int64 // 2
-	if err = enc.Decode(&int64v); err != nil {
-		t.Fatal(err)
-	}
-	if int64v != math.MaxInt64 {
-		t.Fatalf("want %d but get %d", math.MaxInt64, int64v)
-	}
-	var stringv string // 3
-	if err = enc.Decode(&stringv); err != nil {
-		t.Fatal(err)
-	}
-	if stringv != "text" {
-		t.Fatalf("want %s but get %s", "test", stringv)
-	}
-	var boolv bool // 4
-	if err = enc.Decode(&boolv); err != nil {
-		t.Fatal(err)
-	}
-	if boolv != true {
-		t.Fatalf("want true but get %v", boolv)
-	}
-	var timev time.Time // 5
-	if err = enc.Decode(&timev); err != nil {
-		t.Fatal(err)
-	}
-	if !timev.Equal(runAt) {
-		t.Fatalf("want %s but get %s", runAt.String(), timev.String())
-	}
-	var mapv map[string]int // 6
-	if err = enc.Decode(&mapv); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(mapv, amap) {
-		t.Fatalf("want %#v but get %#v", amap, mapv)
-	}
-	var structv user // 7
-	if err = enc.Decode(&structv); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(structv, astruct) {
-		t.Fatalf("want %#v but get %#v", astruct, structv)
-	}
-	tok, err = enc.Token()
-	if err != nil {
-		t.Fatal(err)
-	}
-	delim, ok = tok.(json.Delim)
-	if !ok {
-		t.Fatalf("want a json.Delim but get %T(%v)", tok, tok)
-	}
-	if delim != ']' {
-		t.Fatalf("want %c but get %c", ']', delim)
-	}
-	tok, err = enc.Token()
-	if tok != nil || err != io.EOF {
-		t.Fatalf("want <nil>, EOF but get %v, %v", tok, err)
+	if job.LastErrStack() != nil {
+		t.Fatalf("want last err stack is nil but get %q", *job.LastErrStack())
 	}
 
-	jobs2, err := q.Lock(context.Background(), 1)
+	jobs2, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,21 +108,21 @@ func TestQueue_EnqueueLockUnlock(t *testing.T) {
 		t.Fatalf("want length of job2 is zero but get %d", len(jobs2))
 	}
 
-	err = q.Unlock(context.Background(), []int64{id})
+	err = mu.Unlock(context.Background(), []int64{id})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = q.Close()
+	err = mu.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func TestQueue_ErrNotLockedJobsInLocal(t *testing.T) {
-	q := newQueue(t, "")
+func TestErrNotLockedJobsInLocal(t *testing.T) {
+	mu := newQueue().Mutex()
 	var id int64 = 100000
-	err := q.Unlock(context.Background(), []int64{id})
+	err := mu.Unlock(context.Background(), []int64{id})
 	if !errors.Is(err, que.ErrNotLockedJobsInLocal) {
 		t.Fatalf("want err is %v but get %v", que.ErrNotLockedJobsInLocal, err)
 	}
@@ -198,9 +130,7 @@ func TestQueue_ErrNotLockedJobsInLocal(t *testing.T) {
 	if !errors.As(err, &errQue) {
 		t.Fatalf("want %T but get %T", errQue, err)
 	}
-	if errQue.Queue != q.Queue() {
-		t.Fatalf("want queue is %s but get %s", q.Queue(), errQue.Queue)
-	}
+
 	var errUnlock *que.ErrUnlock
 	if !errors.As(errQue.Err, &errUnlock) {
 		t.Fatalf("want %T but get %T", errUnlock, errQue.Err)
@@ -213,30 +143,36 @@ func TestQueue_ErrNotLockedJobsInLocal(t *testing.T) {
 		t.Fatalf("want id is %d but get %d", id, aid)
 	}
 
-	err = q.Close()
+	err = mu.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func TestQueue_LockSuccessAfterUnlock(t *testing.T) {
-	q := newQueue(t, "")
-	id, err := q.Enqueue(context.Background(), nil, time.Now())
+func TestLockSuccessAfterUnlock(t *testing.T) {
+	q := newQueue()
+	mu := q.Mutex()
+	qs := randQueue()
+	id, err := q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs,
+		Args:  []byte{},
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs1, err := q.Lock(context.Background(), 1)
+	jobs1, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs1) != 1 {
 		t.Fatalf("want lock 1 job but get %d", len(jobs1))
 	}
-	err = q.Unlock(context.Background(), []int64{id})
+	err = mu.Unlock(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs2, err := q.Lock(context.Background(), 1)
+	jobs2, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,20 +180,26 @@ func TestQueue_LockSuccessAfterUnlock(t *testing.T) {
 		t.Fatalf("want lock 1 job but get %d", len(jobs2))
 	}
 
-	err = q.Close()
+	err = mu.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func TestQueue_SameQueueDiffInstance(t *testing.T) {
-	// q1 locked
-	q1 := newQueue(t, "")
-	id, err := q1.Enqueue(context.Background(), nil, time.Now())
+func TestSameQueueDiffMutex(t *testing.T) {
+	q := newQueue()
+
+	mu1 := q.Mutex()
+	qs1 := randQueue()
+	id, err := q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs1,
+		Args:  que.Args(),
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs1, err := q1.Lock(context.Background(), 1)
+	jobs1, err := mu1.Lock(context.Background(), qs1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,10 +207,10 @@ func TestQueue_SameQueueDiffInstance(t *testing.T) {
 		t.Fatalf("want lock 1 job but get %d", len(jobs1))
 	}
 
-	// q1 locked
-	// q2 get nothinng
-	q2 := newQueue(t, q1.Queue())
-	jobs2, err := q2.Lock(context.Background(), 1)
+	// mu1 locked
+	// mu2 get nothinng
+	mu2 := q.Mutex()
+	jobs2, err := mu2.Lock(context.Background(), qs1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,14 +218,14 @@ func TestQueue_SameQueueDiffInstance(t *testing.T) {
 		t.Fatalf("want lock 0 job but get %d", len(jobs2))
 	}
 
-	// q1 unlock
-	err = q1.Unlock(context.Background(), []int64{id})
+	// mu1 unlock
+	err = mu1.Unlock(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// q1 unlock, q2 get job
-	jobs3, err := q2.Lock(context.Background(), 1)
+	// mu1 unlock, mu2 get job
+	jobs3, err := mu2.Lock(context.Background(), qs1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,13 +233,17 @@ func TestQueue_SameQueueDiffInstance(t *testing.T) {
 		t.Fatalf("want lock 1 job but get %d", len(jobs3))
 	}
 
-	// q1 enqueue another job
-	_, err = q1.Enqueue(context.Background(), nil, time.Now())
+	// q enqueue another job
+	_, err = q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs1,
+		Args:  que.Args(),
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// q1 enqueue another job, q2 get another job.
-	jobs4, err := q2.Lock(context.Background(), 1)
+	// q1 enqueue another job, mu2 get another job.
+	jobs4, err := mu2.Lock(context.Background(), qs1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,27 +251,33 @@ func TestQueue_SameQueueDiffInstance(t *testing.T) {
 		t.Fatalf("want lock 1 job but get %d", len(jobs3))
 	}
 
-	err = q1.Close()
+	err = mu1.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
-	err = q2.Close()
+	err = mu2.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func TestQueue_DiffQueue(t *testing.T) {
-	// q1 enqueue
-	q1 := newQueue(t, "")
-	_, err := q1.Enqueue(context.Background(), nil, time.Now())
+func TestDiffQueue(t *testing.T) {
+	q := newQueue()
+
+	mu := q.Mutex()
+	qs1 := randQueue()
+	_, err := q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs1,
+		Args:  que.Args(),
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// q2 get nothinng
-	q2 := newQueue(t, "")
-	jobs2, err := q2.Lock(context.Background(), 1)
+	// qs2 get nothinng
+	qs2 := randQueue()
+	jobs2, err := mu.Lock(context.Background(), qs2, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,80 +285,64 @@ func TestQueue_DiffQueue(t *testing.T) {
 		t.Fatalf("want lock 0 job but get %d", len(jobs2))
 	}
 
-	err = q1.Close()
+	err = mu.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
-	}
-	err = q2.Close()
-	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func TestQueue_Close(t *testing.T) {
-	q1 := newQueue(t, "")
-	err := q1.Close()
-	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
-	}
+func TestLockSucessAfterRelease(t *testing.T) {
+	q := newQueue()
 
-	q1.Queue()
-
-	_, err = q1.Enqueue(context.Background(), nil, time.Now())
-	if !errors.Is(err, que.ErrQueueAlreadyClosed) {
-		t.Fatalf("want err %v but get %v", que.ErrQueueAlreadyClosed, err)
-	}
-
-	_, err = q1.Lock(context.Background(), 1)
-	if !errors.Is(err, que.ErrQueueAlreadyClosed) {
-		t.Fatalf("want err %v but get %v", que.ErrQueueAlreadyClosed, err)
-	}
-
-	err = q1.Close()
-	if !errors.Is(err, que.ErrQueueAlreadyClosed) {
-		t.Fatalf("want err %v but get %v", que.ErrQueueAlreadyClosed, err)
-	}
-}
-
-func TestQueue_LockSucessAfterClose(t *testing.T) {
-	// q1 locked
-	q1 := newQueue(t, "")
-	_, err := q1.Enqueue(context.Background(), nil, time.Now())
+	mu1 := q.Mutex()
+	qs1 := randQueue()
+	_, err := q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs1,
+		Args:  que.Args(),
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs1, err := q1.Lock(context.Background(), 1)
+	jobs1, err := mu1.Lock(context.Background(), qs1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs1) != 1 {
 		t.Fatalf("want lock 1 job but get %d", len(jobs1))
 	}
-	err = q1.Close()
+	err = mu1.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 
-	q2 := newQueue(t, q1.Queue())
-	jobs2, err := q2.Lock(context.Background(), 1)
+	mu2 := q.Mutex()
+	jobs2, err := mu2.Lock(context.Background(), qs1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs2) != 1 {
 		t.Fatalf("want lock 1 job but get %d", len(jobs2))
 	}
-	err = q2.Close()
+	err = mu2.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func testQueue_Resolve(t *testing.T, q que.Queue, resolve func(jb que.Job) error) {
-	_, err := q.Enqueue(context.Background(), nil, time.Now())
+func testResolve(t *testing.T, resolve func(jb que.Job) error) {
+	q := newQueue()
+	mu := q.Mutex()
+	qs := randQueue()
+	_, err := q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs,
+		Args:  que.Args(),
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs1, err := q.Lock(context.Background(), 1)
+	jobs1, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,11 +355,15 @@ func testQueue_Resolve(t *testing.T, q que.Queue, resolve func(jb que.Job) error
 		t.Fatal(err)
 	}
 
-	_, err = q.Enqueue(context.Background(), nil, time.Now())
+	_, err = q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs,
+		Args:  que.Args(),
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs2, err := q.Lock(context.Background(), 1)
+	jobs2, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,11 +379,14 @@ func testQueue_Resolve(t *testing.T, q que.Queue, resolve func(jb que.Job) error
 		}
 	})
 
-	_, err = q.Enqueue(context.Background(), nil, time.Now())
+	_, err = q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs,
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs3, err := q.Lock(context.Background(), 1)
+	jobs3, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,12 +402,12 @@ func testQueue_Resolve(t *testing.T, q que.Queue, resolve func(jb que.Job) error
 		}
 	})
 
-	err = q.Unlock(context.Background(), []int64{jb1.ID(), jb2.ID(), jb3.ID()})
+	err = mu.Unlock(context.Background(), []int64{jb1.ID(), jb2.ID(), jb3.ID()})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	jobs4, err := q.Lock(context.Background(), 1)
+	jobs4, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,41 +419,47 @@ func testQueue_Resolve(t *testing.T, q que.Queue, resolve func(jb que.Job) error
 		t.Fatalf("rollback job(%d) should lock but get %v", jb3.ID(), jb4.ID())
 	}
 
-	err = q.Close()
+	err = mu.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
-func TestQueue_Done(t *testing.T) {
-	testQueue_Resolve(t, newQueue(t, ""), func(jb que.Job) error {
+func TestDone(t *testing.T) {
+	testResolve(t, func(jb que.Job) error {
 		return jb.Done(context.Background())
 	})
 }
-func TestQueue_Destroy(t *testing.T) {
-	testQueue_Resolve(t, newQueue(t, ""), func(jb que.Job) error {
+func TestDestroy(t *testing.T) {
+	testResolve(t, func(jb que.Job) error {
 		return jb.Destroy(context.Background())
 	})
 }
-func TestQueue_Expire(t *testing.T) {
-	testQueue_Resolve(t, newQueue(t, ""), func(jb que.Job) error {
+func TestExpire(t *testing.T) {
+	testResolve(t, func(jb que.Job) error {
 		return jb.Expire(context.Background())
 	})
 }
 
-func TestQueue_RetryIn(t *testing.T) {
-	testQueue_Resolve(t, newQueue(t, ""), func(jb que.Job) error {
-		return jb.RetryIn(context.Background(), 10*time.Second, nil)
+func TestRetryAfter(t *testing.T) {
+	testResolve(t, func(jb que.Job) error {
+		return jb.RetryAfter(context.Background(), 10*time.Second, nil)
 	})
 }
 
-func TestQueue_RetryInLock(t *testing.T) {
-	q := newQueue(t, "")
-	_, err := q.Enqueue(context.Background(), nil, time.Now())
+func TestRetryAfterThenWaitUntilGet(t *testing.T) {
+	q := newQueue()
+	mu := q.Mutex()
+	qs := randQueue()
+	_, err := q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs,
+		Args:  que.Args(),
+		RunAt: time.Now(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs1, err := q.Lock(context.Background(), 1)
+	jobs1, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,15 +468,15 @@ func TestQueue_RetryInLock(t *testing.T) {
 	}
 	jb1 := jobs1[0]
 
-	err = jb1.RetryIn(context.Background(), 1*time.Second, errors.New("test retry"))
+	err = jb1.RetryAfter(context.Background(), 1*time.Second, errors.New("test retry"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = q.Unlock(context.Background(), []int64{jb1.ID()})
+	err = mu.Unlock(context.Background(), []int64{jb1.ID()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs2, err := q.Lock(context.Background(), 1)
+	jobs2, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +485,7 @@ func TestQueue_RetryInLock(t *testing.T) {
 	}
 
 	time.Sleep(1 * time.Second)
-	jobs3, err := q.Lock(context.Background(), 1)
+	jobs3, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,48 +499,16 @@ func TestQueue_RetryInLock(t *testing.T) {
 	if jb3.RetryCount() != 1 {
 		t.Fatalf("want retry count is 1 but get %d", jb3.RetryCount())
 	}
-	if jb3.LastErrMsg() != "test retry" {
-		t.Fatalf("want LastErrMsg is %q but get %q", "test retry", jb3.LastErrMsg())
+	if *jb3.LastErrMsg() != "test retry" {
+		t.Fatalf("want LastErrMsg is %q but get %q", "test retry", *jb3.LastErrMsg())
 	}
-	if !strings.Contains(jb3.LastErrStack(), "queue_test.go") {
-		t.Fatalf("want last err stack contains %s but get %s", "queue_test.go", jb3.LastErrStack())
+	if !strings.Contains(*jb3.LastErrStack(), "queue_test.go") {
+		t.Fatalf("want last err stack contains %s but get %s", "queue_test.go", *jb3.LastErrStack())
 	}
 
-	err = q.Close()
+	err = mu.Release()
 	if err != nil {
-		t.Fatalf("want Close() returns nil but get err %v", err)
-	}
-}
-
-func TestCheckQueue(t *testing.T) {
-	var testCases = []struct {
-		queue string
-		err   string
-	}{
-		{
-			queue: "",
-			err:   ": queue must not be empty string",
-		},
-		{
-			queue: strings.Repeat("1", 101),
-			err:   strings.Repeat("1", 101) + ": the length of queue greater than 100",
-		},
-		{
-			queue: "check-queue",
-			err:   "",
-		},
-	}
-	for _, tc := range testCases {
-		err := que.CheckQueue(tc.queue)
-		if err == nil {
-			if tc.err != "" {
-				t.Fatalf("queue(%q): want err %q but get %v", tc.queue, tc.err, err)
-			}
-			continue
-		}
-		if err.Error() != tc.err {
-			t.Fatalf("queue(%q): want err %q but get %q", tc.queue, tc.err, err.Error())
-		}
+		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
@@ -620,7 +537,7 @@ var dbOnce sync.Once
 var _db *sql.DB
 var _driver string
 
-func newQueue(t testing.TB, queue string) que.Queue {
+func newQueue() que.Queue {
 	dbOnce.Do(func() {
 		_driver = os.Getenv("QUE_DB_DRIVER")
 		source := os.Getenv("QUE_DB_SOURCE")
@@ -640,19 +557,9 @@ func newQueue(t testing.TB, queue string) que.Queue {
 		}
 	})
 
-	if queue == "" {
-		var err error
-		queue, err = randQueue()
-		if err != nil {
-			panic(err)
-		}
-		if t != nil {
-			t.Log("queue:", queue)
-		}
-	}
 	switch _driver {
 	case "postgres":
-		q, err := pg.New(_db, queue)
+		q, err := pg.New(_db)
 		if err != nil {
 			panic(err)
 		}
@@ -662,17 +569,17 @@ func newQueue(t testing.TB, queue string) que.Queue {
 	}
 }
 
-func randQueue() (string, error) {
+func randQueue() string {
 	const bufLen = 10
 	var buf [bufLen]byte
 	_, err := rand.Read(buf[:])
 	if err != nil {
-		return "", err
+		panic(err)
 	}
 	var q [3 + 2*bufLen]byte
 	q[0] = 't'
 	q[1] = 't'
 	q[2] = '-'
 	hex.Encode(q[3:], buf[:])
-	return string(q[:]), nil
+	return string(q[:])
 }

@@ -12,13 +12,10 @@ type job struct {
 	db *sql.DB
 	tx *sql.Tx
 
-	id    int64
-	queue string
-	args  []byte
+	id   int64
+	plan que.Plan
 
-	runAt time.Time
-
-	retryCount   int
+	retryCount   int32
 	lastErrMsg   sql.NullString
 	lastErrStack sql.NullString
 }
@@ -27,28 +24,26 @@ func (j *job) ID() int64 {
 	return j.id
 }
 
-func (j *job) Queue() string {
-	return j.queue
+func (j *job) Plan() que.Plan {
+	return j.plan
 }
 
-func (j *job) Args() []byte {
-	return j.args
-}
-
-func (j *job) RunAt() time.Time {
-	return j.runAt
-}
-
-func (j *job) RetryCount() int {
+func (j *job) RetryCount() int32 {
 	return j.retryCount
 }
 
-func (j *job) LastErrMsg() string {
-	return j.lastErrMsg.String
+func (j *job) LastErrMsg() *string {
+	if j.lastErrMsg.Valid {
+		return &j.lastErrMsg.String
+	}
+	return nil
 }
 
-func (j *job) LastErrStack() string {
-	return j.lastErrStack.String
+func (j *job) LastErrStack() *string {
+	if j.lastErrStack.Valid {
+		return &j.lastErrStack.String
+	}
+	return nil
 }
 
 func (j *job) In(tx *sql.Tx) {
@@ -90,7 +85,7 @@ SET retry_count        = retry_count + 1,
     last_err_stack = left($3::text, 8192)
 WHERE id = $4::bigint`
 
-func (j *job) RetryIn(ctx context.Context, interval time.Duration, cerr error) error {
+func (j *job) RetryAfter(ctx context.Context, interval time.Duration, cerr error) error {
 	args := make([]interface{}, 4)
 	args[0] = interval.Seconds()
 	if cerr != nil {
@@ -100,6 +95,14 @@ func (j *job) RetryIn(ctx context.Context, interval time.Duration, cerr error) e
 	args[3] = j.id
 	_, err := j.exec(j.tx)(ctx, retryJob, args...)
 	return err
+}
+
+func (j *job) RetryInPlan(ctx context.Context, cerr error) error {
+	nextInterval, ok := j.plan.RetryPolicy.NextInterval(j.retryCount)
+	if ok {
+		return j.RetryAfter(context.Background(), nextInterval, cerr)
+	}
+	return j.Expire(context.Background())
 }
 
 func (j *job) exec(tx *sql.Tx) func(context.Context, string, ...interface{}) (sql.Result, error) {

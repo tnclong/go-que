@@ -10,7 +10,7 @@ var intervalCases = []struct {
 	retryPolicy RetryPolicy
 	min         []time.Duration
 	max         []time.Duration
-	retryCount  int
+	retryCount  int32
 }{
 	{
 		name: "default",
@@ -54,9 +54,9 @@ func TestNextInterval(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		for _, tc := range intervalCases {
 			policy := tc.retryPolicy
-			var retryCount int
+			var retryCount int32
 			for i := range tc.min {
-				interval, ok := policy.NextInterval(i)
+				interval, ok := policy.NextInterval(int32(i))
 				if !ok {
 					t.Fatalf("%s(%v): want interval in [%v, %v] but retry finished", tc.name, i, tc.min[i], tc.max[i])
 				}

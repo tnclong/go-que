@@ -9,12 +9,15 @@ import (
 )
 
 func ExampleWorker() {
-	q := newQueue(nil, "")
+	q := newQueue()
+	mutex := q.Mutex()
+	qs := randQueue()
 
 	performDone := make(chan struct{}, 1)
 	var performCount int
 	worker, err := que.NewWorker(que.WorkerOptions{
-		Queue:              q,
+		Queue:              qs,
+		Mutex:              mutex,
 		MaxLockPerSecond:   10,
 		MaxBufferJobsCount: 0,
 
@@ -33,7 +36,20 @@ func ExampleWorker() {
 		},
 		MaxPerformPerSecond:       2,
 		MaxConcurrentPerformCount: 1,
-		PerformRetryPolicy: que.RetryPolicy{
+	})
+	if err != nil {
+		panic(err)
+	}
+	go func() {
+		err := worker.Run()
+		fmt.Println("Run():", err.Error())
+	}()
+
+	_, err = q.Enqueue(context.Background(), nil, que.Plan{
+		Queue: qs,
+		Args:  que.Args(1, 2, 3),
+		RunAt: time.Now(),
+		RetryPolicy: que.RetryPolicy{
 			InitialInterval:        1 * time.Second,
 			NextIntervalMultiplier: 1,
 			IntervalRandomPercent:  0,
@@ -44,23 +60,16 @@ func ExampleWorker() {
 	if err != nil {
 		panic(err)
 	}
-	go func() {
-		err := worker.Run()
-		fmt.Println("Run():", err.Error())
-	}()
-
-	_, err = q.Enqueue(context.Background(), nil, time.Now())
-	if err != nil {
-		panic(err)
-	}
 
 	<-performDone
 	err = worker.Stop(context.Background())
 	fmt.Println("Stop():", err)
+	fmt.Println("Release():", mutex.Release())
 	// Output:
 	// performCount: 1; retryCount: 0; panic
 	// performCount: 2; retryCount: 1; panic
 	// performCount: 3; retryCount: 2; Done
 	// Run(): worker stoped
 	// Stop(): <nil>
+	// Release(): <nil>
 }
