@@ -33,6 +33,20 @@ type Job interface {
 	RetryInPlan(ctx context.Context, cerr error) error
 }
 
+// UniqueLifecycle controls if and when job need unique in database.
+// The unique is queue level. No potential impact between different queues.
+// If UniqueLifecycle is Always or Done, auto override Destory() method to Done().
+type UniqueLifecycle uint8
+
+const (
+	// Ignore ignore UniqueID and set the UniqueID to nil.
+	Ignore UniqueLifecycle = iota
+	// Always must set a UniqueID and it's value is unique after enqueue.
+	Always
+	// Done keeps job as unique until expired.
+	Done
+)
+
 // Plan is a series of parameters structure a new job.
 type Plan struct {
 	// Queue is a string express of queue.
@@ -48,6 +62,11 @@ type Plan struct {
 
 	// RetryPolicy guides retry behavior when perform job failed.
 	RetryPolicy RetryPolicy
+
+	// UniqueID is optinal value when UniqueLifecycle is Ignore.
+	// UniqueID must set a value when UniqueLifecycle is Always or Done.
+	UniqueID        *string
+	UniqueLifecycle UniqueLifecycle
 }
 
 // Queue is a abstract interface.

@@ -64,6 +64,9 @@ FROM goque_jobs
 WHERE id = $1::bigint`
 
 func (j *job) Destroy(ctx context.Context) error {
+	if j.plan.UniqueLifecycle > que.Ignore {
+		return j.Done(ctx)
+	}
 	_, err := j.exec(j.tx)(ctx, destroyJob, j.id)
 	return err
 }
@@ -73,8 +76,20 @@ SET retry_count = retry_count + 1,
     expired_at  = now()
 WHERE id = $1::bigint`
 
+const expireUniqueIDJob = `UPDATE goque_jobs
+SET retry_count = retry_count + 1,
+	expired_at  = now(),
+	unique_id = null
+WHERE id = $1::bigint`
+
 func (j *job) Expire(ctx context.Context) error {
-	_, err := j.exec(j.tx)(ctx, expireJob, j.id)
+	var execSQL string
+	if j.plan.UniqueLifecycle == que.Done {
+		execSQL = expireUniqueIDJob
+	} else {
+		execSQL = expireJob
+	}
+	_, err := j.exec(j.tx)(ctx, execSQL, j.id)
 	return err
 }
 

@@ -119,9 +119,11 @@ func (m *mutex) Lock(ctx context.Context, queue string, count int) (jobs []que.J
 	for rows.Next() {
 		var jb job
 		rp := (*jsonRetryPolicy)(&jb.plan.RetryPolicy)
+		var uniqueID sql.NullString
 		err = rows.Scan(
 			&jb.id, &jb.plan.Queue, &jb.plan.Args, &jb.plan.RunAt, rp, &doneAt, &exipredAt,
 			&jb.retryCount, &jb.lastErrMsg, &jb.lastErrStack,
+			&uniqueID, &jb.plan.UniqueLifecycle,
 			&locked, &remaining,
 		)
 		if err != nil {
@@ -137,6 +139,9 @@ func (m *mutex) Lock(ctx context.Context, queue string, count int) (jobs []que.J
 			panic(fmt.Errorf("get a job(%v) has locked=%v", jb.id, locked))
 		}
 		jb.db = m.db
+		if uniqueID.Valid {
+			jb.plan.UniqueID = &uniqueID.String
+		}
 		m.ids[jb.id] = true
 		jobs = append(jobs, &jb)
 	}

@@ -20,6 +20,8 @@ func (eq *ErrQueue) Unwrap() error {
 
 // Caller judge these errors by errors.Is() in std library.
 var (
+	ErrViolateUniqueConstraint = errors.New("unique id violates unique constraint")
+
 	ErrNotLockedJobsInDB    = errors.New("jobs hadn't locked in db")
 	ErrNotLockedJobsInLocal = errors.New("jobs hadn't lcoked in local")
 
