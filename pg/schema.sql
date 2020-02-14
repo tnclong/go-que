@@ -19,6 +19,11 @@ create table goque_jobs
     last_err_msg   text,
     last_err_stack text,
 
+    unique_id            varchar(255),
+    unique_lifecycle     smallint 
+        constraint valid_unique_lifecycle 
+            check(unique_lifecycle>=0 AND unique_lifecycle<=2),
+
     constraint err_length
         check ((char_length(last_err_msg) <= 512) AND (char_length(last_err_stack) <= 8192))
 );
@@ -26,6 +31,8 @@ create table goque_jobs
 create index goque_jobs_lock_idx
     on goque_jobs (queue, run_at, id)
     where (done_at IS NULL AND expired_at IS NULL);
+
+create unique index goque_jobs_unique_uidx on goque_jobs (queue, unique_id);
 
 CREATE TYPE goque_remaining_result AS
 (
