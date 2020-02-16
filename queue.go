@@ -66,7 +66,7 @@ type Plan struct {
 	RetryPolicy RetryPolicy
 
 	// UniqueID is optinal value when UniqueLifecycle is Ignore.
-	// UniqueID must set a value when UniqueLifecycle is Always or Done.
+	// Otherwise, UniqueID must set a value.
 	UniqueID        *string
 	UniqueLifecycle UniqueLifecycle
 }

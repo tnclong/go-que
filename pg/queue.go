@@ -78,7 +78,7 @@ func normalize(plan *que.Plan) error {
 		plan.UniqueID = nil
 	} else {
 		if plan.UniqueID == nil {
-			return errors.New("unique is required when unique lifecycle is always or done")
+			return errors.New("unique id is required when unique lifecycle is always or done or lockable")
 		}
 	}
 	return nil
