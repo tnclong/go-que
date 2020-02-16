@@ -7,6 +7,8 @@ There are benefits of using Que to route jobs:
   * **Simplify Architecture** - If you're already using database, a separate queue is another moving part that can break.
   * **Safety** - If a golang process dies, the jobs it's working won't be lost, or left in a locked or ambiguous state - they immediately become available for any other worker to pick up according to RetryPolicy.
   * **Concurrency** - Workers don't block each other. This allows for high throughput with a large number of workers.
+  * **Uniqueness** - Controls the uniqueness of jobs in same queue.
+  * **Scheduler** - Schedule jobs uses cron expression.
   * **Customization** - Database let you easy to customizate queue suit for your business requirement.
 
 ## Install
