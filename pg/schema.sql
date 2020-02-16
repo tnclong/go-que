@@ -22,7 +22,7 @@ create table goque_jobs
     unique_id            varchar(255),
     unique_lifecycle     smallint 
         constraint valid_unique_lifecycle 
-            check(unique_lifecycle>=0 AND unique_lifecycle<=2),
+            check(unique_lifecycle>=0 AND unique_lifecycle<=3),
 
     constraint err_length
         check ((char_length(last_err_msg) <= 512) AND (char_length(last_err_stack) <= 8192))

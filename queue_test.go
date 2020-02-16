@@ -484,7 +484,7 @@ func TestRetryAfterThenWaitUntilGet(t *testing.T) {
 		t.Fatalf("want lock 0 job but get %d", len(jobs2))
 	}
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(time.Duration(1.1 * float64(time.Second)))
 	jobs3, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -534,15 +534,15 @@ func TestUniqueIgnore(t *testing.T) {
 	}
 }
 
-func testUnique(t *testing.T, ulf que.UniqueLifecycle, resolve func(job que.Job)) {
+func testUnique(t *testing.T, ulf que.UniqueLifecycle, unique bool, resolve func(job que.Job)) {
 	q := newQueue()
 	qs := randQueue()
 	mu := q.Mutex()
 
-	if err := enqueue(q, qs, &qs, que.Always); err != nil {
+	if err := enqueue(q, qs, &qs, ulf); err != nil {
 		t.Fatal(err)
 	}
-	err := enqueue(q, qs, &qs, que.Always)
+	err := enqueue(q, qs, &qs, ulf)
 	if err == nil || !errors.Is(err, que.ErrViolateUniqueConstraint) {
 		t.Fatalf("want err is que.ErrViolateUniqueConstraint but get %v", err)
 	}
@@ -554,14 +554,20 @@ func testUnique(t *testing.T, ulf que.UniqueLifecycle, resolve func(job que.Job)
 		t.Fatalf("want length of jobs is 1 but get %d", len(jobs))
 	}
 	resolve(jobs[0])
-	err = enqueue(q, qs, &qs, que.Always)
-	if err == nil || !errors.Is(err, que.ErrViolateUniqueConstraint) {
-		t.Fatalf("want err is que.ErrViolateUniqueConstraint but get %v", err)
+	err = enqueue(q, qs, &qs, ulf)
+	if unique {
+		if err == nil || !errors.Is(err, que.ErrViolateUniqueConstraint) {
+			t.Fatalf("want err is que.ErrViolateUniqueConstraint but get %v", err)
+		}
+	} else {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
 func testUniqueAlways(t *testing.T, resolve func(job que.Job)) {
-	testUnique(t, que.Always, resolve)
+	testUnique(t, que.Always, true, resolve)
 }
 
 func TestUniqueAlwaysDestroy(t *testing.T) {
@@ -604,12 +610,12 @@ func TestUniqueAlwaysRetryInPlan(t *testing.T) {
 	})
 }
 
-func testUniqueDone(t *testing.T, resolve func(job que.Job)) {
-	testUnique(t, que.Done, resolve)
+func testUniqueDone(t *testing.T, unique bool, resolve func(job que.Job)) {
+	testUnique(t, que.Done, unique, resolve)
 }
 
 func TestUniqueDoneDestroy(t *testing.T) {
-	testUniqueDone(t, func(job que.Job) {
+	testUniqueDone(t, true, func(job que.Job) {
 		if err := job.Destroy(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -617,7 +623,7 @@ func TestUniqueDoneDestroy(t *testing.T) {
 }
 
 func TestUniqueDoneDone(t *testing.T) {
-	testUniqueDone(t, func(job que.Job) {
+	testUniqueDone(t, true, func(job que.Job) {
 		if err := job.Done(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -625,7 +631,7 @@ func TestUniqueDoneDone(t *testing.T) {
 }
 
 func TestUniqueDoneRetryAfter(t *testing.T) {
-	testUniqueDone(t, func(job que.Job) {
+	testUniqueDone(t, true, func(job que.Job) {
 		if err := job.RetryAfter(context.Background(), 10*time.Second, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -633,28 +639,55 @@ func TestUniqueDoneRetryAfter(t *testing.T) {
 }
 
 func TestUniqueDoneExpire(t *testing.T) {
-	q := newQueue()
-	qs := randQueue()
-	mu := q.Mutex()
+	testUniqueDone(t, false, func(job que.Job) {
+		if err := job.Expire(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
 
-	if err := enqueue(q, qs, &qs, que.Done); err != nil {
-		t.Fatal(err)
-	}
-	jobs, err := mu.Lock(context.Background(), qs, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(jobs) != 1 {
-		t.Fatalf("want length of jobs is 1 but get %d", len(jobs))
-	}
-	job := jobs[0]
-	if err := job.Expire(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	err = enqueue(q, qs, &qs, que.Always)
-	if err != nil {
-		t.Fatal(err)
-	}
+func testUniqueLockable(t *testing.T, unique bool, resolve func(job que.Job)) {
+	testUnique(t, que.Lockable, unique, resolve)
+}
+
+func TestUniqueLockableRetryAfter(t *testing.T) {
+	testUniqueLockable(t, true, func(job que.Job) {
+		if err := job.RetryAfter(context.Background(), 10*time.Second, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestUniqueLockableDone(t *testing.T) {
+	testUniqueLockable(t, false, func(job que.Job) {
+		if err := job.Done(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestUniqueLockableDestroy(t *testing.T) {
+	testUniqueLockable(t, false, func(job que.Job) {
+		if err := job.Destroy(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestUniqueLockableExpire(t *testing.T) {
+	testUniqueLockable(t, false, func(job que.Job) {
+		if err := job.Expire(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestUniqueLockableRetryInPlan(t *testing.T) {
+	testUniqueLockable(t, false, func(job que.Job) {
+		if err := job.RetryInPlan(context.Background(), nil); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func dbTx(t *testing.T, rollback bool, f func(*sql.Tx)) {

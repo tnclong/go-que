@@ -45,6 +45,8 @@ const (
 	Always
 	// Done keeps job as unique until expired.
 	Done
+	// Lockable keeps job as unique until done, expired and destroyed.
+	Lockable
 )
 
 // Plan is a series of parameters structure a new job.

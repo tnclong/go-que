@@ -54,8 +54,19 @@ const doneJob = `UPDATE goque_jobs
 SET done_at = now()
 WHERE id = $1::bigint`
 
+const doneUniqueIDJob = `UPDATE goque_jobs
+SET done_at = now(),
+    unique_id = null
+WHERE id = $1::bigint`
+
 func (j *job) Done(ctx context.Context) error {
-	_, err := j.exec(j.tx)(ctx, doneJob, j.id)
+	var execSQL string
+	if j.plan.UniqueLifecycle == que.Lockable {
+		execSQL = doneUniqueIDJob
+	} else {
+		execSQL = doneJob
+	}
+	_, err := j.exec(j.tx)(ctx, execSQL, j.id)
 	return err
 }
 
@@ -64,7 +75,8 @@ FROM goque_jobs
 WHERE id = $1::bigint`
 
 func (j *job) Destroy(ctx context.Context) error {
-	if j.plan.UniqueLifecycle > que.Ignore {
+	if j.plan.UniqueLifecycle == que.Always ||
+		j.plan.UniqueLifecycle == que.Done {
 		return j.Done(ctx)
 	}
 	_, err := j.exec(j.tx)(ctx, destroyJob, j.id)
@@ -78,13 +90,13 @@ WHERE id = $1::bigint`
 
 const expireUniqueIDJob = `UPDATE goque_jobs
 SET retry_count = retry_count + 1,
-	expired_at  = now(),
-	unique_id = null
+    expired_at  = now(),
+    unique_id = null
 WHERE id = $1::bigint`
 
 func (j *job) Expire(ctx context.Context) error {
 	var execSQL string
-	if j.plan.UniqueLifecycle == que.Done {
+	if j.plan.UniqueLifecycle >= que.Done {
 		execSQL = expireUniqueIDJob
 	} else {
 		execSQL = expireJob
