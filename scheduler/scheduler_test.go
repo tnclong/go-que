@@ -1,12 +1,17 @@
 package scheduler
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
-	"reflect"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
+	_ "github.com/lib/pq"
 	"github.com/tnclong/go-que"
+	"github.com/tnclong/go-que/mock"
 )
 
 func TestDecodeArgs(t *testing.T) {
@@ -56,98 +61,358 @@ func mustMarshal(e interface{}) []byte {
 	return data
 }
 
-func TestCalculate(t *testing.T) {
-	now := mustParseTime("2020-02-16T19:14:45+08:00")
-	lastRunAt := mustParseTime("2020-02-16T19:11:45+08:00")
-	schedule := Schedule{
-		"exists.ignore": Item{
-			Queue:          "exists.ignore",
-			Args:           `[1]`,
-			Cron:           "* * * * *",
-			RecoveryPolicy: "ignore",
-		},
-		"exists.reparation": Item{
-			Queue:          "exists.reparation",
-			Args:           `["2"]`,
-			Cron:           "* * * * *",
-			RecoveryPolicy: "reparation",
-		},
-		"not-exists.reparation": Item{
-			Queue:          "not-exists.reparation",
-			Args:           `[]`,
-			Cron:           "* * * * *",
-			RecoveryPolicy: "reparation",
-		},
-	}
-
+func TestSchedulerPerform(t *testing.T) {
 	var tcs = []struct {
-		Name     string
-		Schedule Schedule
-		Args     args
+		Name string
 
-		Plans []que.Plan
+		Provider    Provider
+		NowFunc     func() time.Time
+		Derivations map[string]Derivation
+		MockJob     func(ctx context.Context, mj *mock.MockJob)
+		MockQueue   func(ctx context.Context, mq *mock.MockQueue)
 	}{
 		{
-			Name:     "exists.ignore",
-			Schedule: schedule,
-			Args: args{
-				lastRunAt: lastRunAt,
-				names: []string{
-					"exists.ignore",
-				},
+			Name: "nil schedule",
+
+			Provider: &MemProvider{
+				Schedule: nil,
 			},
-			Plans: []que.Plan{
-				{
-					Queue: "exists.ignore",
-					Args:  []byte(`[1]`),
-					RunAt: mustParseTime("2020-02-16T19:14:00+08:00"),
-				},
+			NowFunc: func() time.Time {
+				return mustParseTime("2020-02-16T19:14:45+08:00")
 			},
-		},
-		{
-			Name:     "exists.reparation",
-			Schedule: schedule,
-			Args: args{
-				lastRunAt: lastRunAt,
-				names: []string{
-					"exists.reparation",
-				},
+			Derivations: nil,
+			MockJob: func(ctx context.Context, mj *mock.MockJob) {
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"))}).Times(1)
+				mj.EXPECT().In(gomock.Not(nil)).Times(1)
+				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
 			},
-			Plans: []que.Plan{
-				{
-					Queue: "exists.reparation",
-					Args:  []byte(`["2"]`),
-					RunAt: mustParseTime("2020-02-16T19:12:00+08:00"),
-				},
-				{
-					Queue: "exists.reparation",
-					Args:  []byte(`["2"]`),
-					RunAt: mustParseTime("2020-02-16T19:13:00+08:00"),
-				},
-				{
-					Queue: "exists.reparation",
-					Args:  []byte(`["2"]`),
-					RunAt: mustParseTime("2020-02-16T19:14:00+08:00"),
-				},
+			MockQueue: func(ctx context.Context, mq *mock.MockQueue) {
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue:           "que.scheduler",
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00")),
+						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
+						RetryPolicy:     retryPolicy,
+						UniqueID:        &uniqueID,
+						UniqueLifecycle: uniqueLifecycle,
+					}),
+				).Return([]int64{1}, nil).Times(1)
 			},
 		},
+
 		{
-			Name:     "not-exists.reparation",
-			Schedule: schedule,
-			Args: args{
-				lastRunAt: lastRunAt,
-				names:     []string{},
+			Name: "exists in schedule but ignore at first time enqueue",
+
+			Provider: &MemProvider{
+				Schedule: Schedule{
+					"name.enqueue.ignore": Item{
+						Queue:          "que.enqueue.ignore",
+						Args:           `[3]`,
+						Cron:           "* * * * *",
+						RecoveryPolicy: Ignore,
+					},
+				},
 			},
-			Plans: nil,
+			NowFunc: func() time.Time {
+				return mustParseTime("2020-02-16T19:14:45+08:00")
+			},
+			Derivations: nil,
+			MockJob: func(ctx context.Context, mj *mock.MockJob) {
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"))}).Times(1)
+				mj.EXPECT().In(gomock.Not(nil)).Times(1)
+				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
+			},
+			MockQueue: func(ctx context.Context, mq *mock.MockQueue) {
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue:           "que.scheduler",
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.enqueue.ignore"),
+						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
+						RetryPolicy:     retryPolicy,
+						UniqueID:        &uniqueID,
+						UniqueLifecycle: uniqueLifecycle,
+					}),
+				).Return([]int64{1}, nil).Times(1)
+			},
+		},
+
+		{
+			Name: "reparative unscheduled jobs",
+
+			Provider: &MemProvider{
+				Schedule: Schedule{
+					"name.recovery.reparation": Item{
+						Queue:          "que.recovery.reparation",
+						Args:           `["3"]`,
+						Cron:           "* * * * *",
+						RecoveryPolicy: Reparation,
+						RetryPolicy: que.RetryPolicy{
+							InitialInterval:        10 * time.Second,
+							MaxInterval:            20 * time.Second,
+							NextIntervalMultiplier: 1.5,
+							IntervalRandomPercent:  33,
+							MaxRetryCount:          3,
+						},
+					},
+				},
+			},
+			NowFunc: func() time.Time {
+				return mustParseTime("2020-02-16T19:14:45+08:00")
+			},
+			Derivations: nil,
+			MockJob: func(ctx context.Context, mj *mock.MockJob) {
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.recovery.reparation")}).Times(1)
+				mj.EXPECT().In(gomock.Not(nil)).Times(1)
+				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
+			},
+			MockQueue: func(ctx context.Context, mq *mock.MockQueue) {
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue: "que.recovery.reparation",
+						Args:  []byte(`["3"]`),
+						RunAt: mustParseTime("2020-02-16T19:12:00+08:00"),
+						RetryPolicy: que.RetryPolicy{
+							InitialInterval:        10 * time.Second,
+							MaxInterval:            20 * time.Second,
+							NextIntervalMultiplier: 1.5,
+							IntervalRandomPercent:  33,
+							MaxRetryCount:          3,
+						},
+					}),
+					gomock.Eq(que.Plan{
+						Queue: "que.recovery.reparation",
+						Args:  []byte(`["3"]`),
+						RunAt: mustParseTime("2020-02-16T19:13:00+08:00"),
+						RetryPolicy: que.RetryPolicy{
+							InitialInterval:        10 * time.Second,
+							MaxInterval:            20 * time.Second,
+							NextIntervalMultiplier: 1.5,
+							IntervalRandomPercent:  33,
+							MaxRetryCount:          3,
+						},
+					}),
+					gomock.Eq(que.Plan{
+						Queue: "que.recovery.reparation",
+						Args:  []byte(`["3"]`),
+						RunAt: mustParseTime("2020-02-16T19:14:00+08:00"),
+						RetryPolicy: que.RetryPolicy{
+							InitialInterval:        10 * time.Second,
+							MaxInterval:            20 * time.Second,
+							NextIntervalMultiplier: 1.5,
+							IntervalRandomPercent:  33,
+							MaxRetryCount:          3,
+						},
+					}),
+				).Return([]int64{1, 2, 3}, nil).Times(1)
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue:           "que.scheduler",
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.recovery.reparation"),
+						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
+						RetryPolicy:     retryPolicy,
+						UniqueID:        &uniqueID,
+						UniqueLifecycle: uniqueLifecycle,
+					}),
+				).Return([]int64{4}, nil).Times(1)
+			},
+		},
+
+		{
+			Name: "ignore unscheduled jobs",
+
+			Provider: &MemProvider{
+				Schedule: Schedule{
+					"name.recovery.ignore": Item{
+						Queue:          "que.recovery.ignore",
+						Args:           `["3"]`,
+						Cron:           "* * * * *",
+						RecoveryPolicy: Ignore,
+					},
+				},
+			},
+			NowFunc: func() time.Time {
+				return mustParseTime("2020-02-16T19:14:45+08:00")
+			},
+			Derivations: nil,
+			MockJob: func(ctx context.Context, mj *mock.MockJob) {
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.recovery.ignore")}).Times(1)
+				mj.EXPECT().In(gomock.Not(nil)).Times(1)
+				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
+			},
+			MockQueue: func(ctx context.Context, mq *mock.MockQueue) {
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue: "que.recovery.ignore",
+						Args:  []byte(`["3"]`),
+						RunAt: mustParseTime("2020-02-16T19:14:00+08:00"),
+					}),
+				).Return([]int64{1}, nil).Times(1)
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue:           "que.scheduler",
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.recovery.ignore"),
+						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
+						RetryPolicy:     retryPolicy,
+						UniqueID:        &uniqueID,
+						UniqueLifecycle: uniqueLifecycle,
+					}),
+				).Return([]int64{2}, nil).Times(1)
+			},
+		},
+
+		{
+			Name: "derive zero plan",
+
+			Provider: &MemProvider{
+				Schedule: Schedule{
+					"name.derive.zero": Item{
+						Queue:          "que.derive.zero",
+						Args:           `["3"]`,
+						Cron:           "* * * * *",
+						RecoveryPolicy: Ignore,
+					},
+				},
+			},
+			NowFunc: func() time.Time {
+				return mustParseTime("2020-02-16T19:14:45+08:00")
+			},
+			Derivations: map[string]Derivation{
+				"name.derive.zero": DerivationFunc(func(ctx context.Context, tx *sql.Tx, plans []que.Plan) ([]que.Plan, error) {
+					return nil, nil
+				}),
+			},
+			MockJob: func(ctx context.Context, mj *mock.MockJob) {
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.derive.zero")}).Times(1)
+				mj.EXPECT().In(gomock.Not(nil)).Times(1)
+				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
+			},
+			MockQueue: func(ctx context.Context, mq *mock.MockQueue) {
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue:           "que.scheduler",
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.derive.zero"),
+						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
+						RetryPolicy:     retryPolicy,
+						UniqueID:        &uniqueID,
+						UniqueLifecycle: uniqueLifecycle,
+					}),
+				).Return([]int64{1}, nil).Times(1)
+			},
+		},
+
+		{
+			Name: "derive two plans",
+
+			Provider: &MemProvider{
+				Schedule: Schedule{
+					"name.derive.two": Item{
+						Queue:          "que.derive.two",
+						Args:           `["3"]`,
+						Cron:           "* * * * *",
+						RecoveryPolicy: Ignore,
+					},
+				},
+			},
+			NowFunc: func() time.Time {
+				return mustParseTime("2020-02-16T19:14:45+08:00")
+			},
+			Derivations: map[string]Derivation{
+				"name.derive.two": DerivationFunc(func(ctx context.Context, tx *sql.Tx, plans []que.Plan) ([]que.Plan, error) {
+					plans = append(plans, plans...)
+					return plans, nil
+				}),
+			},
+			MockJob: func(ctx context.Context, mj *mock.MockJob) {
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.derive.two")}).Times(1)
+				mj.EXPECT().In(gomock.Not(nil)).Times(1)
+				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
+			},
+			MockQueue: func(ctx context.Context, mq *mock.MockQueue) {
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue: "que.derive.two",
+						Args:  []byte(`["3"]`),
+						RunAt: mustParseTime("2020-02-16T19:14:00+08:00"),
+					}),
+					gomock.Eq(que.Plan{
+						Queue: "que.derive.two",
+						Args:  []byte(`["3"]`),
+						RunAt: mustParseTime("2020-02-16T19:14:00+08:00"),
+					}),
+				).Return([]int64{1, 2}, nil).Times(1)
+				mq.EXPECT().Enqueue(
+					gomock.Eq(ctx),
+					gomock.Not(nil),
+					gomock.Eq(que.Plan{
+						Queue:           "que.scheduler",
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.derive.two"),
+						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
+						RetryPolicy:     retryPolicy,
+						UniqueID:        &uniqueID,
+						UniqueLifecycle: uniqueLifecycle,
+					}),
+				).Return([]int64{3}, nil).Times(1)
+			},
 		},
 	}
 
+	db := openDB(t)
+	defer db.Close()
 	for _, tc := range tcs {
-		plans := calculate(tc.Schedule, now, tc.Args)
-		if !reflect.DeepEqual(plans, tc.Plans) {
-			t.Fatalf("%s: want\n%+v but get\n%+v", tc.Name, tc.Plans, plans)
-		}
+		t.Run(tc.Name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			ctx := context.Background()
+			mockQueue := mock.NewMockQueue(ctrl)
+			tc.MockQueue(ctx, mockQueue)
+			mockJob := mock.NewMockJob(ctrl)
+			tc.MockJob(ctx, mockJob)
+
+			nowFunc = tc.NowFunc
+			scheduler := &Scheduler{
+				DB:          db,
+				Queue:       "que.scheduler",
+				Enqueue:     mockQueue.Enqueue,
+				Provider:    tc.Provider,
+				Derivations: tc.Derivations,
+			}
+			if err := scheduler.Perform(ctx, mockJob); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
+
+}
+
+func openDB(t *testing.T) *sql.DB {
+	driver := os.Getenv("QUE_DB_DRIVER")
+	source := os.Getenv("QUE_DB_SOURCE")
+
+	db, err := sql.Open(driver, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 func mustParseTime(str string) time.Time {

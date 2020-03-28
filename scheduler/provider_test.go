@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tnclong/go-que"
 )
 
 var wantSchedule = Schedule{
@@ -18,6 +21,13 @@ var wantSchedule = Schedule{
 		Args:           `["1", "2", "3"]`,
 		Cron:           "0 8 * * 1",
 		RecoveryPolicy: "reparation",
+		RetryPolicy: que.RetryPolicy{
+			InitialInterval:        20 * time.Second,
+			MaxInterval:            time.Minute,
+			NextIntervalMultiplier: 2,
+			IntervalRandomPercent:  10,
+			MaxRetryCount:          5,
+		},
 	},
 }
 
@@ -34,6 +44,12 @@ orderWeekReport:
           ["1", "2", "3"]
   cron: "0 8 * * 1"
   recoveryPolicy: "reparation"
+  retryPolicy:
+    initialInterval: 20s
+    maxInterval: 1m
+    nextIntervalMultiplier: 2
+    intervalRandomPercent: 10
+    maxRetryCount: 5
 `)
 	schedule, err := Provide(r)
 	if err != nil {

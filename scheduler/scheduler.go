@@ -18,9 +18,29 @@ import (
 type Scheduler struct {
 	DB *sql.DB
 	// Queue is used by scheduler ennqueue self.
-	Queue    string
-	Enqueue  func(context.Context, *sql.Tx, ...que.Plan) ([]int64, error)
+	Queue string
+	// Enqueue saves a set of jobs according to plans.
+	Enqueue func(context.Context, *sql.Tx, ...que.Plan) ([]int64, error)
+	// Provider privide a list of named schedule.
+	// Scheduler enqueues new plans according to privided schedule.
 	Provider Provider
+	// Derivations is list of Derivation.
+	// The key of provided Schedule corresponding to the key of Derivations.
+	Derivations map[string]Derivation
+}
+
+// Derivation derives new plans from scheduled plans.
+// Derived plans will replace scheduled plans.
+type Derivation interface {
+	Derive(context.Context, *sql.Tx, []que.Plan) ([]que.Plan, error)
+}
+
+// DerivationFunc wraps a function as Derivation.
+type DerivationFunc func(context.Context, *sql.Tx, []que.Plan) ([]que.Plan, error)
+
+// Derive implements Derive of Derivation.
+func (f DerivationFunc) Derive(ctx context.Context, tx *sql.Tx, plans []que.Plan) ([]que.Plan, error) {
+	return f(ctx, tx, plans)
 }
 
 var retryPolicy = que.RetryPolicy{
@@ -38,8 +58,9 @@ var uniqueLifecycle = que.Lockable
 // Prepare auto schedules self in given queue at first.
 // Prepare must be called in application initializtion.
 func (sc *Scheduler) Prepare(ctx context.Context) error {
-	_, err := sc.Enqueue(context.Background(), nil, que.Plan{
+	_, err := sc.Enqueue(ctx, nil, que.Plan{
 		Queue:           sc.Queue,
+		Args:            que.Args(),
 		RunAt:           nowFunc(),
 		RetryPolicy:     retryPolicy,
 		UniqueID:        &uniqueID,
@@ -66,30 +87,51 @@ func (sc *Scheduler) Perform(ctx context.Context, job que.Job) error {
 	if err != nil {
 		log.Panic(sc.sprintf("provide schedule failed with err: %v", err))
 	}
+	if len(schedule) == 0 {
+		log.Print(sc.sprintf("provide zero length of schedule"))
+	}
 	err = ValidateSchedule(schedule)
 	if err != nil {
 		log.Panic(sc.sprintf("provide invalid schedule: %v", err))
 	}
 	now := nowFunc()
-	plans := calculate(schedule, now, args)
-	var planIDs []int64
+	namePlans := calculate(schedule, now, args)
+	nameIDs := make(map[string][]int64)
 	sc.inTx(ctx, func(tx *sql.Tx) {
 		var err error
-		planIDs, err = sc.Enqueue(ctx, tx, plans...)
-		if err != nil {
-			log.Panic(sc.sprintf("enqueue jobs with err: %v", err))
+		var ids []int64
+		var dn Derivation
+		for name, plans := range namePlans {
+			dn = sc.Derivations[name]
+			if dn != nil {
+				plans, err = dn.Derive(ctx, tx, plans)
+				if err != nil {
+					log.Panic(sc.sprintf("derive plans of %q with err: %v", name, err))
+				}
+				if len(plans) == 0 {
+					log.Printf(sc.sprintf("derive zero plan of %q", name))
+					continue
+				}
+			}
+
+			ids, err = sc.Enqueue(ctx, tx, plans...)
+			if err != nil {
+				log.Panic(sc.sprintf("enqueue plans of %q with err: %v", name, err))
+			}
+			nameIDs[name] = ids
 		}
-		sc.enqueueSelfAgain(ctx, tx, now, schedule)
+
 		job.In(tx)
 		err = job.Destroy(ctx)
 		if err != nil {
 			log.Panic(sc.sprintf("destroy old self with err: %v", err))
 		}
+		nameIDs[sc.Queue] = sc.enqueueSelfAgain(ctx, tx, now, schedule)
 	})
 
 	log.Print(sc.sprintf("last ran at %s", args.lastRunAt.String()))
-	for i, plan := range plans {
-		log.Print(sc.sprintf("enqueue %s job %d", plan.Queue, planIDs[i]))
+	for name, ids := range nameIDs {
+		log.Print(sc.sprintf("enqueue plans of %q ids %v", name, ids))
 	}
 
 	return nil
@@ -124,14 +166,14 @@ func (sc *Scheduler) inTx(ctx context.Context, fn func(tx *sql.Tx)) {
 	calledFn = true
 }
 
-func (sc *Scheduler) enqueueSelfAgain(ctx context.Context, tx *sql.Tx, now time.Time, schedule Schedule) {
+func (sc *Scheduler) enqueueSelfAgain(ctx context.Context, tx *sql.Tx, now time.Time, schedule Schedule) []int64 {
 	runAt := now.Truncate(time.Minute).Add(time.Minute)
 	args := make([]interface{}, 0, len(schedule)+1)
 	args = append(args, now)
 	for name := range schedule {
 		args = append(args, name)
 	}
-	_, err := sc.Enqueue(ctx, tx, que.Plan{
+	ids, err := sc.Enqueue(ctx, tx, que.Plan{
 		Queue:           sc.Queue,
 		Args:            que.Args(args...),
 		RunAt:           runAt,
@@ -140,8 +182,9 @@ func (sc *Scheduler) enqueueSelfAgain(ctx context.Context, tx *sql.Tx, now time.
 		UniqueLifecycle: uniqueLifecycle,
 	})
 	if err != nil {
-		panic(sc.sprintf("enqueue self again with err: ", err))
+		log.Panic(sc.sprintf("enqueue self again with err: ", err))
 	}
+	return ids
 }
 
 func (sc *Scheduler) sprintf(format string, a ...interface{}) string {
@@ -162,8 +205,8 @@ func (a args) contains(name string) bool {
 	return false
 }
 
-func calculate(schedule Schedule, now time.Time, args args) []que.Plan {
-	var plans []que.Plan
+func calculate(schedule Schedule, now time.Time, args args) map[string][]que.Plan {
+	namePlans := make(map[string][]que.Plan)
 	for name, item := range schedule {
 		if !args.contains(name) {
 			continue
@@ -187,16 +230,19 @@ func calculate(schedule Schedule, now time.Time, args args) []que.Plan {
 			nextTimes = nextTimes[len(nextTimes)-1:]
 		}
 
+		plans := make([]que.Plan, 0, len(nextTimes))
 		for _, runAt := range nextTimes {
 			plan := que.Plan{
-				Queue: item.Queue,
-				Args:  []byte(item.Args),
-				RunAt: runAt,
+				Queue:       item.Queue,
+				Args:        []byte(item.Args),
+				RunAt:       runAt,
+				RetryPolicy: item.RetryPolicy,
 			}
 			plans = append(plans, plan)
 		}
+		namePlans[name] = plans
 	}
-	return plans
+	return namePlans
 }
 
 func decodeArgs(data []byte) (a args, err error) {

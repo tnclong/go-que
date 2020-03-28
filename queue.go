@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+//go:generate mockgen -package mock -destination mock/queue.go . Job,Queue,Mutex
+
 // Job represents a job in queue.
 type Job interface {
 	// ID returns unique identity of job.

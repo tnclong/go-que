@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/robfig/cron/v3"
+	"github.com/tnclong/go-que"
 )
 
 // Schedule is a set of named items.
@@ -18,6 +19,8 @@ type Item struct {
 	Cron string `yaml:"cron"`
 
 	RecoveryPolicy RecoveryPolicy `yaml:"recoveryPolicy"`
+
+	RetryPolicy que.RetryPolicy `yaml:"retryPolicy"`
 }
 
 // RecoveryPolicy guides how to process schedule after a long period of downtime.
