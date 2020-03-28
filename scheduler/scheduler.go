@@ -71,7 +71,7 @@ func (sc *Scheduler) Prepare(ctx context.Context) error {
 			err = nil
 		}
 	} else {
-		log.Print(sc.sprintf("prepare enqueue self sucess", sc.Queue))
+		log.Print(sc.sprintf("prepare enqueue self sucess"))
 	}
 	return err
 }
