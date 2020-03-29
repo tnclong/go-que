@@ -64,12 +64,10 @@ func ExampleWorker() {
 	<-performDone
 	err = worker.Stop(context.Background())
 	fmt.Println("Stop():", err)
-	fmt.Println("Release():", mutex.Release())
 	// Output:
 	// performCount: 1; retryCount: 0; panic
 	// performCount: 2; retryCount: 1; panic
 	// performCount: 3; retryCount: 2; Done
 	// Run(): worker stoped
 	// Stop(): <nil>
-	// Release(): <nil>
 }

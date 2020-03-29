@@ -87,7 +87,6 @@ type Queue interface {
 }
 
 // Mutex controls locks of performable jobs in database.
-// Mutex must Release after none use it.
 type Mutex interface {
 	// Lock locks a set of jobs in database.
 	// These jobs unable to lock by other mutex until database connection break(closed)
@@ -100,8 +99,4 @@ type Mutex interface {
 	// - ErrNotLockedJobsInDB
 	//    When unlock ids not locked in database.
 	Unlock(ctx context.Context, ids []int64) error
-
-	// Release closes holded database connection and
-	// releases all locks that obtain by call Lock method.
-	Release() error
 }

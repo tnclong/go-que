@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tnclong/go-que"
 )
@@ -17,35 +18,93 @@ import (
 type mutex struct {
 	db *sql.DB
 
-	mu   sync.Mutex
-	conn *sql.Conn
-	ids  map[int64]bool
-}
-
-func newErrQueue(err error) error {
-	return &que.ErrQueue{Err: err}
+	mu     sync.Mutex
+	conn   *sql.Conn
+	active time.Time
+	cancel context.CancelFunc
+	ids    map[int64]bool
+	err    error
 }
 
 type releaseConn func(error)
 
-func (m *mutex) grabConn() (conn *sql.Conn, rc releaseConn, err error) {
+func (m *mutex) grabConn(ctx context.Context) (conn *sql.Conn, rc releaseConn, err error) {
 	m.mu.Lock()
-	if m.conn == nil {
-		m.conn, err = m.db.Conn(context.Background())
-	}
-	if err != nil {
+	if m.err != nil {
 		m.mu.Unlock()
-		return nil, nil, err
+		return nil, nil, &que.ErrQueue{Err: que.ErrBadMutex}
 	}
+
+	if m.conn != nil {
+		m.active = time.Now()
+	} else {
+		m.conn, err = m.db.Conn(ctx)
+		if err != nil {
+			m.mu.Unlock()
+			return nil, nil, err
+		}
+
+		var cctx context.Context
+		cctx, m.cancel = context.WithCancel(context.Background())
+		m.active = time.Now()
+		go m.closeIdleConn(cctx)
+	}
+
 	return m.conn, m.unlockCondReleaseConn, nil
 }
 
 func (m *mutex) unlockCondReleaseConn(err error) {
-	if err == driver.ErrBadConn {
-		m.ids = make(map[int64]bool)
-		m.conn = nil
+	defer m.mu.Unlock()
+	if err == nil {
+		return
 	}
-	m.mu.Unlock()
+
+	m.err = err
+	m.cancel()
+	m.cancel = nil
+	if err != driver.ErrBadConn {
+		m.closeConn(m.conn)
+	}
+	m.conn = nil
+	m.ids = nil
+}
+
+var maxIdle = 10 * time.Second
+
+func (m *mutex) closeIdleConn(ctx context.Context) {
+	ticker := time.NewTicker(maxIdle)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if m.tryCloseIdleConn() {
+				return
+			}
+		}
+	}
+}
+
+func (m *mutex) tryCloseIdleConn() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.ids) != 0 {
+		return false
+	}
+	if m.active.Add(maxIdle).After(time.Now()) {
+		return false
+	}
+	if m.err != nil {
+		return true
+	}
+
+	m.cancel()
+	m.cancel = nil
+	m.conn.Close()
+	m.conn = nil
+	return true
 }
 
 const lockJobs = `WITH RECURSIVE jobs AS (
@@ -101,11 +160,13 @@ func (m *mutex) Lock(ctx context.Context, queue string, count int) (jobs []que.J
 
 	var conn *sql.Conn
 	var release releaseConn
-	conn, release, err = m.grabConn()
+	conn, release, err = m.grabConn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer release(err)
+	defer func() {
+		release(err)
+	}()
 
 	var rows *sql.Rows
 	rows, err = conn.QueryContext(ctx, lockJobs, queue, m.idsAsString(), count)
@@ -130,13 +191,16 @@ func (m *mutex) Lock(ctx context.Context, queue string, count int) (jobs []que.J
 			return nil, err
 		}
 		if doneAt.Valid {
-			panic(fmt.Errorf("get a job(%v) has done_at=%s", jb.id, doneAt.Time.String()))
+			err = fmt.Errorf("get a job(%v) has done_at=%s", jb.id, doneAt.Time.String())
+			panic(err)
 		}
 		if exipredAt.Valid {
-			panic(fmt.Errorf("get a job(%v) has expired_at=%s", jb.id, doneAt.Time.String()))
+			err = fmt.Errorf("get a job(%v) has expired_at=%s", jb.id, doneAt.Time.String())
+			panic(err)
 		}
 		if !locked {
-			panic(fmt.Errorf("get a job(%v) has locked=%v", jb.id, locked))
+			err = fmt.Errorf("get a job(%v) has locked=%v", jb.id, locked)
+			panic(err)
 		}
 		jb.db = m.db
 		if uniqueID.Valid {
@@ -169,11 +233,13 @@ func (m *mutex) Unlock(ctx context.Context, ids []int64) (err error) {
 
 	var conn *sql.Conn
 	var release releaseConn
-	conn, release, err = m.grabConn()
+	conn, release, err = m.grabConn(ctx)
 	if err != nil {
 		return err
 	}
-	defer release(err)
+	defer func() {
+		release(err)
+	}()
 
 	var notExists []int64
 	for _, id := range ids {
@@ -182,7 +248,7 @@ func (m *mutex) Unlock(ctx context.Context, ids []int64) (err error) {
 		}
 	}
 	if len(notExists) > 0 {
-		return newErrQueue(&que.ErrUnlock{IDs: notExists, Err: que.ErrNotLockedJobsInLocal})
+		return &que.ErrQueue{Err: que.ErrUnlockedJobs}
 	}
 
 	var b strings.Builder
@@ -216,35 +282,15 @@ func (m *mutex) Unlock(ctx context.Context, ids []int64) (err error) {
 		i++
 	}
 	if len(notLocked) > 0 {
-		return newErrQueue(&que.ErrUnlock{IDs: notLocked, Err: que.ErrNotLockedJobsInDB})
+		return &que.ErrQueue{Err: que.ErrUnlockedJobs}
 	}
 	return nil
 }
 
-func (m *mutex) Release() error {
-	var conn *sql.Conn
-	m.mu.Lock()
-	conn = m.conn
-	m.conn = nil
-	m.ids = make(map[int64]bool)
-	m.mu.Unlock()
-	if conn != nil {
-		return m.closeConn(conn)
-	}
-	return nil
-}
-
-func (m *mutex) closeConn(conn *sql.Conn) error {
-	err := conn.Raw(func(driverConn interface{}) error {
+func (m *mutex) closeConn(conn *sql.Conn) {
+	conn.Raw(func(driverConn interface{}) error {
 		return driver.ErrBadConn
 	})
-	if err != nil && err != driver.ErrBadConn {
-		return err
-	}
-	if err == nil {
-		return errors.New("try to release connection failed by returns driver.ErrBadConn")
-	}
-	return nil
 }
 
 func (q *queue) query(tx *sql.Tx) func(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {

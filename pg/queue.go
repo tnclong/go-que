@@ -54,7 +54,7 @@ func (q *queue) Enqueue(ctx context.Context, tx *sql.Tx, plans ...que.Plan) (ids
 	rows, err := q.query(tx)(ctx, b.String(), args...)
 	if err != nil {
 		if strings.HasSuffix(err.Error(), `unique constraint "goque_jobs_unique_uidx"`) {
-			return nil, newErrQueue(que.ErrViolateUniqueConstraint)
+			return nil, &que.ErrQueue{Err: que.ErrViolateUniqueConstraint}
 		}
 		return nil, err
 	}

@@ -231,10 +231,6 @@ func (b *Benchmark) Run() {
 	if err != nil {
 		log.Fatalf("Stop worker with err: %v", err)
 	}
-	err = b.Mutex.Release()
-	if err != nil {
-		log.Fatalf("Release mutex with err: %v", err)
-	}
 }
 
 func (b *Benchmark) Summary() {

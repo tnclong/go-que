@@ -21,14 +21,6 @@ import (
 	"github.com/tnclong/go-que/pg"
 )
 
-func TestRelease(t *testing.T) {
-	mu := newQueue().Mutex()
-	err := mu.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
-	}
-}
-
 func TestEnqueueLockUnlock(t *testing.T) {
 	q := newQueue()
 	mu := q.Mutex()
@@ -112,40 +104,24 @@ func TestEnqueueLockUnlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	err = mu.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
-	}
 }
 
-func TestErrNotLockedJobsInLocal(t *testing.T) {
+func TestErrUnlockedJobs(t *testing.T) {
 	mu := newQueue().Mutex()
 	var id int64 = 100000
 	err := mu.Unlock(context.Background(), []int64{id})
-	if !errors.Is(err, que.ErrNotLockedJobsInLocal) {
-		t.Fatalf("want err is %v but get %v", que.ErrNotLockedJobsInLocal, err)
+	if !errors.Is(err, que.ErrUnlockedJobs) {
+		t.Fatalf("want err is %v but get %v", que.ErrUnlockedJobs, err)
 	}
 	var errQue *que.ErrQueue
 	if !errors.As(err, &errQue) {
 		t.Fatalf("want %T but get %T", errQue, err)
 	}
 
-	var errUnlock *que.ErrUnlock
-	if !errors.As(errQue.Err, &errUnlock) {
-		t.Fatalf("want %T but get %T", errUnlock, errQue.Err)
-	}
-	if len(errUnlock.IDs) != 1 {
-		t.Fatalf("want length of id is 1 but get %d", len(errUnlock.IDs))
-	}
-	aid := errUnlock.IDs[0]
-	if aid != id {
-		t.Fatalf("want id is %d but get %d", id, aid)
-	}
-
-	err = mu.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
+	qs := randQueue()
+	_, err = mu.Lock(context.Background(), qs, 1)
+	if !errors.Is(err, que.ErrBadMutex) {
+		t.Fatalf("want err %v but get %v", que.ErrBadMutex, err)
 	}
 }
 
@@ -168,21 +144,18 @@ func TestLockSuccessAfterUnlock(t *testing.T) {
 	if len(jobs1) != 1 {
 		t.Fatalf("want lock 1 job but get %d", len(jobs1))
 	}
+
 	err = mu.Unlock(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	jobs2, err := mu.Lock(context.Background(), qs, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs2) != 1 {
 		t.Fatalf("want lock 1 job but get %d", len(jobs2))
-	}
-
-	err = mu.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
@@ -250,15 +223,6 @@ func TestSameQueueDiffMutex(t *testing.T) {
 	if len(jobs4) != 1 {
 		t.Fatalf("want lock 1 job but get %d", len(jobs3))
 	}
-
-	err = mu1.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
-	}
-	err = mu2.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
-	}
 }
 
 func TestDiffQueue(t *testing.T) {
@@ -283,50 +247,6 @@ func TestDiffQueue(t *testing.T) {
 	}
 	if len(jobs2) != 0 {
 		t.Fatalf("want lock 0 job but get %d", len(jobs2))
-	}
-
-	err = mu.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
-	}
-}
-
-func TestLockSucessAfterRelease(t *testing.T) {
-	q := newQueue()
-
-	mu1 := q.Mutex()
-	qs1 := randQueue()
-	_, err := q.Enqueue(context.Background(), nil, que.Plan{
-		Queue: qs1,
-		Args:  que.Args(),
-		RunAt: time.Now(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	jobs1, err := mu1.Lock(context.Background(), qs1, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(jobs1) != 1 {
-		t.Fatalf("want lock 1 job but get %d", len(jobs1))
-	}
-	err = mu1.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
-	}
-
-	mu2 := q.Mutex()
-	jobs2, err := mu2.Lock(context.Background(), qs1, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(jobs2) != 1 {
-		t.Fatalf("want lock 1 job but get %d", len(jobs2))
-	}
-	err = mu2.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 
@@ -418,11 +338,6 @@ func testResolve(t *testing.T, resolve func(jb que.Job) error) {
 	if jb4.ID() != jb3.ID() {
 		t.Fatalf("rollback job(%d) should lock but get %v", jb3.ID(), jb4.ID())
 	}
-
-	err = mu.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
-	}
 }
 
 func TestDone(t *testing.T) {
@@ -504,11 +419,6 @@ func TestRetryAfterThenWaitUntilGet(t *testing.T) {
 	}
 	if !strings.Contains(*jb3.LastErrStack(), "queue_test.go") {
 		t.Fatalf("want last err stack contains %s but get %s", "queue_test.go", *jb3.LastErrStack())
-	}
-
-	err = mu.Release()
-	if err != nil {
-		t.Fatalf("want Release() returns nil but get err %v", err)
 	}
 }
 

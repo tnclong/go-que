@@ -283,20 +283,6 @@ func (mr *MockMutexMockRecorder) Lock(arg0, arg1, arg2 interface{}) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Lock", reflect.TypeOf((*MockMutex)(nil).Lock), arg0, arg1, arg2)
 }
 
-// Release mocks base method
-func (m *MockMutex) Release() error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Release")
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Release indicates an expected call of Release
-func (mr *MockMutexMockRecorder) Release() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockMutex)(nil).Release))
-}
-
 // Unlock mocks base method
 func (m *MockMutex) Unlock(arg0 context.Context, arg1 []int64) error {
 	m.ctrl.T.Helper()

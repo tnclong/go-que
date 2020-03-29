@@ -22,22 +22,8 @@ func (eq *ErrQueue) Unwrap() error {
 var (
 	ErrViolateUniqueConstraint = errors.New("unique id violates unique constraint")
 
-	ErrNotLockedJobsInDB    = errors.New("jobs hadn't locked in db")
-	ErrNotLockedJobsInLocal = errors.New("jobs hadn't lcoked in local")
+	ErrUnlockedJobs = errors.New("unlock of unlocked jobs")
+	ErrBadMutex     = errors.New("bad mutex")
 
 	ErrWorkerStoped = errors.New("worker stoped")
 )
-
-// ErrUnlock uses for any error when Unlock.
-type ErrUnlock struct {
-	IDs []int64
-	Err error
-}
-
-func (eu *ErrUnlock) Error() string {
-	return fmt.Sprintf("%s when unlock(%v)", eu.Err.Error(), eu.IDs)
-}
-
-func (eu *ErrUnlock) Unwrap() error {
-	return eu.Err
-}

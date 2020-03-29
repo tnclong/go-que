@@ -114,9 +114,6 @@ type WorkerOptions struct {
 //    if err := w.Stop(context.Background()); err != nil {
 //        log.Println(err)
 //    }
-//    if err := mutex.Release(); err != nil {
-//        log.Println(err)
-//    }
 type Worker struct {
 	queue string
 	mutex Mutex
