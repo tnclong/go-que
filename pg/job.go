@@ -84,24 +84,34 @@ func (j *job) Destroy(ctx context.Context) error {
 }
 
 const expireJob = `UPDATE goque_jobs
-SET retry_count = retry_count + 1,
-    expired_at  = now()
-WHERE id = $1::bigint`
+SET retry_count    = retry_count + 1,
+    expired_at     = now(),
+    last_err_msg   = left($1::text, 512),
+    last_err_stack = left($2::text, 8192)
+WHERE id = $3::bigint`
 
 const expireUniqueIDJob = `UPDATE goque_jobs
-SET retry_count = retry_count + 1,
-    expired_at  = now(),
-    unique_id = null
-WHERE id = $1::bigint`
+SET retry_count    = retry_count + 1,
+    expired_at     = now(),
+    unique_id      = null,
+    last_err_msg   = left($1::text, 512),
+    last_err_stack = left($2::text, 8192)
+WHERE id = $3::bigint`
 
-func (j *job) Expire(ctx context.Context) error {
+func (j *job) Expire(ctx context.Context, cerr error) error {
 	var execSQL string
 	if j.plan.UniqueLifecycle >= que.Done {
 		execSQL = expireUniqueIDJob
 	} else {
 		execSQL = expireJob
 	}
-	_, err := j.exec(j.tx)(ctx, execSQL, j.id)
+	var errMsg, errStack string
+	if cerr != nil {
+		errMsg = cerr.Error()
+		errStack = que.Stack(4)
+	}
+
+	_, err := j.exec(j.tx)(ctx, execSQL, errMsg, errStack, j.id)
 	return err
 }
 
@@ -113,23 +123,22 @@ SET retry_count        = retry_count + 1,
 WHERE id = $4::bigint`
 
 func (j *job) RetryAfter(ctx context.Context, interval time.Duration, cerr error) error {
-	args := make([]interface{}, 4)
-	args[0] = interval.Seconds()
+	intervalSeconds := interval.Seconds()
+	var errMsg, errStack string
 	if cerr != nil {
-		args[1] = cerr.Error()
-		args[2] = que.Stack(4)
+		errMsg = cerr.Error()
+		errStack = que.Stack(4)
 	}
-	args[3] = j.id
-	_, err := j.exec(j.tx)(ctx, retryJob, args...)
+	_, err := j.exec(j.tx)(ctx, retryJob, intervalSeconds, errMsg, errStack, j.id)
 	return err
 }
 
 func (j *job) RetryInPlan(ctx context.Context, cerr error) error {
 	nextInterval, ok := j.plan.RetryPolicy.NextInterval(j.retryCount)
 	if ok {
-		return j.RetryAfter(context.Background(), nextInterval, cerr)
+		return j.RetryAfter(ctx, nextInterval, cerr)
 	}
-	return j.Expire(context.Background())
+	return j.Expire(ctx, cerr)
 }
 
 func (j *job) exec(tx *sql.Tx) func(context.Context, string, ...interface{}) (sql.Result, error) {

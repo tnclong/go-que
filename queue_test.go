@@ -352,7 +352,7 @@ func TestDestroy(t *testing.T) {
 }
 func TestExpire(t *testing.T) {
 	testResolve(t, func(jb que.Job) error {
-		return jb.Expire(context.Background())
+		return jb.Expire(context.Background(), nil)
 	})
 }
 
@@ -498,7 +498,7 @@ func TestUniqueAlwaysDone(t *testing.T) {
 
 func TestUniqueAlwaysExpire(t *testing.T) {
 	testUniqueAlways(t, func(job que.Job) {
-		if err := job.Expire(context.Background()); err != nil {
+		if err := job.Expire(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -550,7 +550,7 @@ func TestUniqueDoneRetryAfter(t *testing.T) {
 
 func TestUniqueDoneExpire(t *testing.T) {
 	testUniqueDone(t, false, func(job que.Job) {
-		if err := job.Expire(context.Background()); err != nil {
+		if err := job.Expire(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -586,7 +586,7 @@ func TestUniqueLockableDestroy(t *testing.T) {
 
 func TestUniqueLockableExpire(t *testing.T) {
 	testUniqueLockable(t, false, func(job que.Job) {
-		if err := job.Expire(context.Background()); err != nil {
+		if err := job.Expire(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	})

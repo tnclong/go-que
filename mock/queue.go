@@ -65,17 +65,17 @@ func (mr *MockJobMockRecorder) Done(arg0 interface{}) *gomock.Call {
 }
 
 // Expire mocks base method
-func (m *MockJob) Expire(arg0 context.Context) error {
+func (m *MockJob) Expire(arg0 context.Context, arg1 error) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Expire", arg0)
+	ret := m.ctrl.Call(m, "Expire", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Expire indicates an expected call of Expire
-func (mr *MockJobMockRecorder) Expire(arg0 interface{}) *gomock.Call {
+func (mr *MockJobMockRecorder) Expire(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Expire", reflect.TypeOf((*MockJob)(nil).Expire), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Expire", reflect.TypeOf((*MockJob)(nil).Expire), arg0, arg1)
 }
 
 // ID mocks base method

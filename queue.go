@@ -27,7 +27,7 @@ type Job interface {
 	// Destroy removes job from database.
 	Destroy(ctx context.Context) error
 	// Expire marks job as expired.
-	Expire(ctx context.Context) error
+	Expire(ctx context.Context, cerr error) error
 	// RetryAfter retries perform job after interval.
 	RetryAfter(ctx context.Context, interval time.Duration, cerr error) error
 	// RetryInPlan retries according to RetryPolicy of Plan.
