@@ -1,4 +1,7 @@
-create table goque_jobs
+package pg
+
+var migrateSchemaSQL = `
+create table if not exists goque_jobs
 (
     id                   bigserial                                    not null
         constraint goque_jobs_pkey
@@ -28,20 +31,22 @@ create table goque_jobs
         check ((char_length(last_err_msg) <= 512) AND (char_length(last_err_stack) <= 8192))
 );
 
-create index goque_jobs_lock_idx
+create index if not exists goque_jobs_lock_idx
     on goque_jobs (queue, run_at, id)
     where (done_at IS NULL AND expired_at IS NULL);
 
-create unique index goque_jobs_unique_uidx on goque_jobs (queue, unique_id);
+create unique index if not exists goque_jobs_unique_uidx on goque_jobs (queue, unique_id);
+`
 
-CREATE TYPE goque_remaining_result AS
+var setupConnSQL = `
+CREATE TYPE pg_temp.goque_remaining_result AS
 (
     locked    boolean,
     remaining integer
 );
 
-CREATE OR REPLACE FUNCTION goque_lock_and_decrease_remaining(remaining integer, job goque_jobs)
-    RETURNS goque_remaining_result
+CREATE OR REPLACE FUNCTION pg_temp.goque_lock_and_decrease_remaining(remaining integer, job goque_jobs)
+    RETURNS pg_temp.goque_remaining_result
 AS
 $$
 WITH lock_taken AS (
@@ -58,3 +63,9 @@ SELECT (SELECT taken FROM lock_taken),
 $$
     STABLE
     LANGUAGE SQL;
+`
+
+var cleanupConnSQL = `
+drop function pg_temp.goque_lock_and_decrease_remaining(integer, goque_jobs);
+drop type pg_temp.goque_remaining_result;
+`

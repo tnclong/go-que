@@ -28,18 +28,25 @@ type mutex struct {
 
 type releaseConn func(error)
 
-func (m *mutex) grabConn(ctx context.Context) (conn *sql.Conn, rc releaseConn, err error) {
+func (m *mutex) grabConn(ctx context.Context) (*sql.Conn, releaseConn, error) {
 	m.mu.Lock()
 	if m.err != nil {
 		m.mu.Unlock()
 		return nil, nil, &que.ErrQueue{Err: que.ErrBadMutex}
 	}
 
+	var err error
 	if m.conn != nil {
 		m.active = time.Now()
 	} else {
 		m.conn, err = m.db.Conn(ctx)
 		if err != nil {
+			m.mu.Unlock()
+			return nil, nil, err
+		}
+		err = setupConn(ctx, m.conn)
+		if err != nil {
+			m.closeConn(m.conn, false)
 			m.mu.Unlock()
 			return nil, nil, err
 		}
@@ -63,7 +70,7 @@ func (m *mutex) unlockCondReleaseConn(err error) {
 	m.cancel()
 	m.cancel = nil
 	if err != driver.ErrBadConn {
-		m.closeConn(m.conn)
+		m.closeConn(m.conn, true)
 	}
 	m.conn = nil
 	m.ids = nil
@@ -102,9 +109,19 @@ func (m *mutex) tryCloseIdleConn() bool {
 
 	m.cancel()
 	m.cancel = nil
-	m.conn.Close()
+	m.closeConn(m.conn, true)
 	m.conn = nil
 	return true
+}
+
+func setupConn(ctx context.Context, conn *sql.Conn) error {
+	_, err := conn.ExecContext(ctx, setupConnSQL)
+	return err
+}
+
+func cleanupConn(conn *sql.Conn) error {
+	_, err := conn.ExecContext(context.Background(), cleanupConnSQL)
+	return err
 }
 
 const lockJobs = `WITH RECURSIVE jobs AS (
@@ -121,7 +138,7 @@ const lockJobs = `WITH RECURSIVE jobs AS (
              LIMIT 1
          ) AS jb_t
              JOIN LATERAL (SELECT *
-                           FROM goque_lock_and_decrease_remaining($3, jb_t.jb)) AS locks ON TRUE
+                           FROM pg_temp.goque_lock_and_decrease_remaining($3, jb_t.jb)) AS locks ON TRUE
     UNION ALL
     (
         SELECT (jb_t.jb).*, locks.locked, locks.remaining
@@ -145,7 +162,7 @@ const lockJobs = `WITH RECURSIVE jobs AS (
                  LIMIT 1
              ) AS jb_t
                  JOIN LATERAL (SELECT *
-                               FROM goque_lock_and_decrease_remaining(jb_t.remaining, jb_t.jb)) AS locks
+                               FROM pg_temp.goque_lock_and_decrease_remaining(jb_t.remaining, jb_t.jb)) AS locks
                       ON TRUE
     )
 )
@@ -287,7 +304,10 @@ func (m *mutex) Unlock(ctx context.Context, ids []int64) (err error) {
 	return nil
 }
 
-func (m *mutex) closeConn(conn *sql.Conn) {
+func (m *mutex) closeConn(conn *sql.Conn, clean bool) {
+	if clean {
+		cleanupConn(conn)
+	}
 	conn.Raw(func(driverConn interface{}) error {
 		return driver.ErrBadConn
 	})

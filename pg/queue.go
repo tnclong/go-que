@@ -14,7 +14,15 @@ func New(db *sql.DB) (que.Queue, error) {
 	if db == nil {
 		return nil, errors.New("db must not be nil")
 	}
+	if err := migrate(db); err != nil {
+		return nil, err
+	}
 	return &queue{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	_, err := db.Exec(migrateSchemaSQL)
+	return err
 }
 
 type queue struct {
