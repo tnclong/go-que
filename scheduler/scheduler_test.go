@@ -37,7 +37,7 @@ func TestDecodeArgs(t *testing.T) {
 		t.Fatalf("want a length of names is 0 but get %d", len(args.names))
 	}
 
-	argsData = mustMarshal([]interface{}{now, "q1", "q2"})
+	argsData = mustMarshal([]interface{}{now, []string{"q1", "q2"}})
 	args, err = decodeArgs(argsData)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestSchedulerPerform(t *testing.T) {
 					gomock.Not(nil),
 					gomock.Eq(que.Plan{
 						Queue:           "que.scheduler",
-						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00")),
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), []string{}),
 						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
 						RetryPolicy:     retryPolicy,
 						UniqueID:        &uniqueID,
@@ -130,7 +130,7 @@ func TestSchedulerPerform(t *testing.T) {
 					gomock.Not(nil),
 					gomock.Eq(que.Plan{
 						Queue:           "que.scheduler",
-						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.enqueue.ignore"),
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), []string{"name.enqueue.ignore"}),
 						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
 						RetryPolicy:     retryPolicy,
 						UniqueID:        &uniqueID,
@@ -165,7 +165,7 @@ func TestSchedulerPerform(t *testing.T) {
 			},
 			Derivations: nil,
 			MockJob: func(ctx context.Context, mj *mock.MockJob) {
-				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.recovery.reparation")}).Times(1)
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), []string{"name.recovery.reparation"})}).Times(1)
 				mj.EXPECT().In(gomock.Not(nil)).Times(1)
 				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
 			},
@@ -215,7 +215,7 @@ func TestSchedulerPerform(t *testing.T) {
 					gomock.Not(nil),
 					gomock.Eq(que.Plan{
 						Queue:           "que.scheduler",
-						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.recovery.reparation"),
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), []string{"name.recovery.reparation"}),
 						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
 						RetryPolicy:     retryPolicy,
 						UniqueID:        &uniqueID,
@@ -243,7 +243,7 @@ func TestSchedulerPerform(t *testing.T) {
 			},
 			Derivations: nil,
 			MockJob: func(ctx context.Context, mj *mock.MockJob) {
-				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.recovery.ignore")}).Times(1)
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), []string{"name.recovery.ignore"})}).Times(1)
 				mj.EXPECT().In(gomock.Not(nil)).Times(1)
 				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
 			},
@@ -262,7 +262,7 @@ func TestSchedulerPerform(t *testing.T) {
 					gomock.Not(nil),
 					gomock.Eq(que.Plan{
 						Queue:           "que.scheduler",
-						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.recovery.ignore"),
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), []string{"name.recovery.ignore"}),
 						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
 						RetryPolicy:     retryPolicy,
 						UniqueID:        &uniqueID,
@@ -294,7 +294,7 @@ func TestSchedulerPerform(t *testing.T) {
 				}),
 			},
 			MockJob: func(ctx context.Context, mj *mock.MockJob) {
-				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.derive.zero")}).Times(1)
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), []string{"name.derive.zero"})}).Times(1)
 				mj.EXPECT().In(gomock.Not(nil)).Times(1)
 				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
 			},
@@ -304,7 +304,7 @@ func TestSchedulerPerform(t *testing.T) {
 					gomock.Not(nil),
 					gomock.Eq(que.Plan{
 						Queue:           "que.scheduler",
-						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.derive.zero"),
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), []string{"name.derive.zero"}),
 						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
 						RetryPolicy:     retryPolicy,
 						UniqueID:        &uniqueID,
@@ -337,7 +337,7 @@ func TestSchedulerPerform(t *testing.T) {
 				}),
 			},
 			MockJob: func(ctx context.Context, mj *mock.MockJob) {
-				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), "name.derive.two")}).Times(1)
+				mj.EXPECT().Plan().Return(que.Plan{Args: que.Args(mustParseTime("2020-02-16T19:11:45+08:00"), []string{"name.derive.two"})}).Times(1)
 				mj.EXPECT().In(gomock.Not(nil)).Times(1)
 				mj.EXPECT().Destroy(gomock.Eq(ctx)).Return(nil).Times(1)
 			},
@@ -361,7 +361,7 @@ func TestSchedulerPerform(t *testing.T) {
 					gomock.Not(nil),
 					gomock.Eq(que.Plan{
 						Queue:           "que.scheduler",
-						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), "name.derive.two"),
+						Args:            que.Args(mustParseTime("2020-02-16T19:14:45+08:00"), []string{"name.derive.two"}),
 						RunAt:           mustParseTime("2020-02-16T19:15:00+08:00"),
 						RetryPolicy:     retryPolicy,
 						UniqueID:        &uniqueID,

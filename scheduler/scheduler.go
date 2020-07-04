@@ -3,7 +3,6 @@ package scheduler
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -168,14 +167,13 @@ func (sc *Scheduler) inTx(ctx context.Context, fn func(tx *sql.Tx)) {
 
 func (sc *Scheduler) enqueueSelfAgain(ctx context.Context, tx *sql.Tx, now time.Time, schedule Schedule) []int64 {
 	runAt := now.Truncate(time.Minute).Add(time.Minute)
-	args := make([]interface{}, 0, len(schedule)+1)
-	args = append(args, now)
+	names := make([]string, 0, len(schedule))
 	for name := range schedule {
-		args = append(args, name)
+		names = append(names, name)
 	}
 	ids, err := sc.Enqueue(ctx, tx, que.Plan{
 		Queue:           sc.Queue,
-		Args:            que.Args(args...),
+		Args:            que.Args(now, names),
 		RunAt:           runAt,
 		RetryPolicy:     retryPolicy,
 		UniqueID:        &uniqueID,
@@ -246,18 +244,14 @@ func calculate(schedule Schedule, now time.Time, args args) map[string][]que.Pla
 }
 
 func decodeArgs(data []byte) (a args, err error) {
-	err = json.Unmarshal(data, &a.names)
+	var count int
+	count, err = que.ParseArgs(data, &a.lastRunAt, &a.names)
 	if err != nil {
 		return
 	}
-	if len(a.names) == 0 {
+	if count == 0 {
 		return args{lastRunAt: nowFunc()}, nil
 	}
-	a.lastRunAt, err = time.Parse(time.RFC3339, a.names[0])
-	if err != nil {
-		return
-	}
-	a.names = a.names[1:]
 	return a, nil
 }
 
