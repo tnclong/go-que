@@ -84,15 +84,13 @@ func (j *job) Destroy(ctx context.Context) error {
 }
 
 const expireJob = `UPDATE goque_jobs
-SET retry_count    = retry_count + 1,
-    expired_at     = now(),
+SET expired_at     = now(),
     last_err_msg   = left($1::text, 512),
     last_err_stack = left($2::text, 8192)
 WHERE id = $3::bigint`
 
 const expireUniqueIDJob = `UPDATE goque_jobs
-SET retry_count    = retry_count + 1,
-    expired_at     = now(),
+SET expired_at     = now(),
     unique_id      = null,
     last_err_msg   = left($1::text, 512),
     last_err_stack = left($2::text, 8192)
