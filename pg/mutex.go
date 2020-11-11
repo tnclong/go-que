@@ -181,11 +181,38 @@ func (m *mutex) Lock(ctx context.Context, queue string, count int) (jobs []que.J
 	defer func() {
 		release(err)
 	}()
+	var ids []int64
+	jobs, ids, err = m.lockInMux(ctx, conn, queue, count)
+	if err != nil {
+		return jobs, err
+	}
+	var validIDs map[int64]bool
+	validIDs, err = m.verifyJobs(ctx, conn, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == len(validIDs) {
+		return jobs, nil
+	}
+	var i int
+	invalidIDs := make([]int64, 0, len(ids)-len(validIDs))
+	for _, job := range jobs {
+		id := job.ID()
+		if validIDs[id] {
+			jobs[i] = job
+			i++
+		} else {
+			invalidIDs = append(invalidIDs, id)
+		}
+	}
+	return jobs[:i], m.unlockInMux(ctx, conn, invalidIDs)
+}
 
+func (m *mutex) lockInMux(ctx context.Context, conn *sql.Conn, queue string, count int) (jobs []que.Job, ids []int64, err error) {
 	var rows *sql.Rows
 	rows, err = conn.QueryContext(ctx, lockJobs, queue, m.idsAsString(), count)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var doneAt, exipredAt sql.NullTime
 	var locked bool
@@ -202,7 +229,7 @@ func (m *mutex) Lock(ctx context.Context, queue string, count int) (jobs []que.J
 			&locked, &remaining,
 		)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if doneAt.Valid {
 			err = fmt.Errorf("get a job(%v) has done_at=%s", jb.id, doneAt.Time.String())
@@ -222,8 +249,41 @@ func (m *mutex) Lock(ctx context.Context, queue string, count int) (jobs []que.J
 		}
 		m.ids[jb.id] = true
 		jobs = append(jobs, &jb)
+		ids = append(ids, jb.id)
 	}
-	return jobs, nil
+	return jobs, ids, nil
+}
+
+func (m *mutex) verifyJobs(ctx context.Context, conn *sql.Conn, ids []int64) (map[int64]bool, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	rows, err := conn.QueryContext(ctx, fmt.Sprintf(verifyJobsSQL, inInt64Array(ids)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	validIDs := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		err := rows.Scan(&id)
+		if err != nil {
+			return nil, err
+		}
+		validIDs[id] = true
+	}
+	return validIDs, nil
+}
+
+func inInt64Array(ids []int64) string {
+	var buf []byte
+	buf = strconv.AppendInt(buf, ids[0], 10)
+	for _, id := range ids[1:] {
+		buf = append(buf, ',')
+		buf = strconv.AppendInt(buf, id, 10)
+	}
+	return string(buf)
 }
 
 func (m *mutex) idsAsString() string {
@@ -254,7 +314,11 @@ func (m *mutex) Unlock(ctx context.Context, ids []int64) (err error) {
 	defer func() {
 		release(err)
 	}()
+	err = m.unlockInMux(ctx, conn, ids)
+	return
+}
 
+func (m *mutex) unlockInMux(ctx context.Context, conn *sql.Conn, ids []int64) (err error) {
 	var notExists []int64
 	for _, id := range ids {
 		if !m.ids[id] {

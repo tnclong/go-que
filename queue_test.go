@@ -600,6 +600,68 @@ func TestUniqueLockableRetryInPlan(t *testing.T) {
 	})
 }
 
+func TestParallelLock(t *testing.T) {
+	q := newQueue()
+	qs := randQueue()
+
+	var wantCount = 1 << 8
+	var waitGroup sync.WaitGroup
+	var goJobs [5][]que.Job
+	ctx, cancel := context.WithCancel(context.Background())
+	for i := 0; i < len(goJobs); i++ {
+		go func(i int) {
+			mu := q.Mutex()
+			waitGroup.Add(1)
+			for {
+				select {
+				case <-ctx.Done():
+					waitGroup.Done()
+					return
+				default:
+					jobs, err := mu.Lock(context.Background(), qs, 1<<4)
+					if err != nil {
+						t.Error(err)
+					}
+					goJobs[i] = append(goJobs[i], jobs...)
+					var ids []int64
+					for _, job := range jobs {
+						ids = append(ids, job.ID())
+						if err = job.Done(context.Background()); err != nil {
+							t.Error(err)
+						}
+					}
+					err = mu.Unlock(context.Background(), ids)
+					if err != nil {
+						t.Error(err)
+					}
+				}
+			}
+		}(i)
+	}
+
+	for i := 0; i < wantCount; i++ {
+		_, err := q.Enqueue(context.Background(), nil, que.Plan{
+			Queue: qs,
+			Args:  que.Args(),
+			RunAt: time.Now(),
+		})
+		if err != nil {
+			t.Error(err)
+		}
+	}
+
+	time.Sleep(1 * time.Second)
+	cancel()
+	waitGroup.Wait()
+	var lockCount int
+	for i := 0; i < len(goJobs); i++ {
+		lockCount += len(goJobs[i])
+	}
+	if lockCount != wantCount {
+		t.Fatalf("want lock count is %d but get %d", wantCount, lockCount)
+	}
+}
+
 func dbTx(t *testing.T, rollback bool, f func(*sql.Tx)) {
 	tx, err := _db.Begin()
 	if err != nil {
