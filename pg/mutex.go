@@ -125,33 +125,31 @@ func cleanupConn(conn *sql.Conn) error {
 }
 
 const lockJobs = `WITH RECURSIVE jobs AS (
-    SELECT (jb_t.jb).*, locks.locked, locks.remaining
+    SELECT (jb).*, locks.locked, locks.remaining
     FROM (
-             SELECT goque_jobs AS jb
-             FROM goque_jobs
+             SELECT jb
+             FROM public.goque_jobs AS jb
              where queue = $1::text
                AND NOT id = ANY ($2::bigint[])
                AND run_at <= now()
-               AND done_at IS NULL
-               AND expired_at IS NULL
+               AND done_at IS NULL AND expired_at IS NULL
              ORDER BY run_at, id
              LIMIT 1
          ) AS jb_t
              JOIN LATERAL (SELECT *
-                           FROM pg_temp.goque_lock_and_decrease_remaining($3, jb_t.jb)) AS locks ON TRUE
+                           FROM pg_temp.goque_lock_and_decrease_remaining($3, jb)) AS locks ON TRUE
     UNION ALL
     (
-        SELECT (jb_t.jb).*, locks.locked, locks.remaining
+        SELECT (jb).*, locks.locked, locks.remaining
         FROM (
                  SELECT remaining,
                         (
-                            SELECT goque_jobs
-                            FROM goque_jobs
+                            SELECT jb
+                            FROM public.goque_jobs AS jb
                             WHERE queue = $1::text
                               AND NOT id = ANY ($2::bigint[])
                               AND run_at <= now()
-                              AND done_at IS NULL
-                              AND expired_at IS NULL
+                              AND done_at IS NULL AND expired_at IS NULL
                               AND (run_at, id) >
                                   (jobs.run_at, jobs.id)
                             ORDER BY run_at, id
@@ -162,8 +160,7 @@ const lockJobs = `WITH RECURSIVE jobs AS (
                  LIMIT 1
              ) AS jb_t
                  JOIN LATERAL (SELECT *
-                               FROM pg_temp.goque_lock_and_decrease_remaining(jb_t.remaining, jb_t.jb)) AS locks
-                      ON TRUE
+                               FROM pg_temp.goque_lock_and_decrease_remaining(remaining, jb)) AS locks ON TRUE
     )
 )
 SELECT *
