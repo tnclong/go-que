@@ -37,9 +37,9 @@ func TestStack(t *testing.T) {
 	t.Log(stack)
 
 	stacks := []string{
-		"github.com/tnclong/go-que/stack_test.go:36",
-		"github.com/tnclong/go-que/stack_test.go:17",
-		"github.com/tnclong/go-que/stack_test.go:31",
+		"github.com/theplant/go-que/stack_test.go:36",
+		"github.com/theplant/go-que/stack_test.go:17",
+		"github.com/theplant/go-que/stack_test.go:31",
 		"tnclong/go-que/stack_test.go:25",
 		"tnclong/go-que/stack_test.go:14",
 	}
