@@ -1,4 +1,4 @@
-module github.com/tnclong/go-que
+module github.com/theplant/go-que
 
 go 1.13
 
