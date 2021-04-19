@@ -51,13 +51,15 @@ func (j *job) In(tx *sql.Tx) {
 }
 
 const doneJob = `UPDATE goque_jobs
-SET done_at = now()
-WHERE id = $1::bigint`
+SET done_at = now(),
+    push_notification = $1::text
+WHERE id = $2::bigint`
 
 const doneUniqueIDJob = `UPDATE goque_jobs
 SET done_at = now(),
+    push_notification = $1::text,
     unique_id = null
-WHERE id = $1::bigint`
+WHERE id = $2::bigint`
 
 func (j *job) Done(ctx context.Context) error {
 	var execSQL string
@@ -66,7 +68,13 @@ func (j *job) Done(ctx context.Context) error {
 	} else {
 		execSQL = doneJob
 	}
-	_, err := j.exec(j.tx)(ctx, execSQL, j.id)
+	pushNotificationStr := ""
+	pushNotification := ctx.Value("push_notification")
+	if pushNotification!= nil {
+		pushNotificationStr = pushNotification.(string)
+	}
+
+	_, err := j.exec(j.tx)(ctx, execSQL, pushNotificationStr, j.id)
 	return err
 }
 
