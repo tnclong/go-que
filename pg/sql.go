@@ -19,7 +19,7 @@ create table if not exists goque_jobs
     expired_at           timestamp with time zone,
     result               jsonb                    default '{}'::jsonb not null
         constraint result
-            check (jsonb_typeof(args) = 'object'::text),
+            check (jsonb_typeof(result) = 'object'::text),
 
     retry_count          integer                  default 0           not null,
     last_err_msg   text,
