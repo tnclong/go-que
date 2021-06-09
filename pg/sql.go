@@ -18,13 +18,14 @@ create table if not exists goque_jobs
     done_at              timestamp with time zone,
     expired_at           timestamp with time zone,
     push_notification    text default '',
-    result               jsonb                    default '{}'::jsonb not null
-        constraint result
-            check (jsonb_typeof(result) = 'object'::text),
 
     retry_count          integer                  default 0           not null,
     last_err_msg   text,
     last_err_stack text,
+
+    result               jsonb                    default '{}'::jsonb not null
+        constraint result
+            check (jsonb_typeof(result) = 'object'::text),
 
     unique_id            varchar(255),
     unique_lifecycle     smallint 

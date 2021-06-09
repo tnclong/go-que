@@ -225,9 +225,9 @@ func (m *mutex) lockInMux(ctx context.Context, conn *sql.Conn, queue string, cou
 		rp := (*jsonRetryPolicy)(&jb.plan.RetryPolicy)
 		var uniqueID sql.NullString
 		err = rows.Scan(
-			&jb.id, &jb.plan.Queue, &jb.plan.Args, &createdAt, &jb.plan.RunAt, rp, &doneAt, &exipredAt, &pushNotification, &result,
+			&jb.id, &jb.plan.Queue, &jb.plan.Args, &createdAt, &jb.plan.RunAt, rp, &doneAt, &exipredAt, &pushNotification,
 			&jb.retryCount, &jb.lastErrMsg, &jb.lastErrStack,
-			&uniqueID, &jb.plan.UniqueLifecycle,
+			&uniqueID, &jb.plan.UniqueLifecycle, &result,
 			&locked, &remaining,
 		)
 		if err != nil {
