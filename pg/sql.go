@@ -17,6 +17,7 @@ create table if not exists goque_jobs
     retry_policy         jsonb                                        not null,
     done_at              timestamp with time zone,
     expired_at           timestamp with time zone,
+    push_notification    text default '',
     result               jsonb                    default '{}'::jsonb not null
         constraint result
             check (jsonb_typeof(result) = 'object'::text),
