@@ -217,14 +217,14 @@ func (m *mutex) lockInMux(ctx context.Context, conn *sql.Conn, queue string, cou
 	var createdAt, doneAt, exipredAt sql.NullTime
 	var locked bool
 	var remaining int
-	var pushNotification string
+	var result []byte
 	defer rows.Close()
 	for rows.Next() {
 		var jb job
 		rp := (*jsonRetryPolicy)(&jb.plan.RetryPolicy)
 		var uniqueID sql.NullString
 		err = rows.Scan(
-			&jb.id, &jb.plan.Queue, &jb.plan.Args, &createdAt, &jb.plan.RunAt, rp, &doneAt, &exipredAt, &pushNotification,
+			&jb.id, &jb.plan.Queue, &jb.plan.Args, &createdAt, &jb.plan.RunAt, rp, &doneAt, &exipredAt, &result,
 			&jb.retryCount, &jb.lastErrMsg, &jb.lastErrStack,
 			&uniqueID, &jb.plan.UniqueLifecycle,
 			&locked, &remaining,
