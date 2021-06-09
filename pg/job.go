@@ -68,10 +68,9 @@ func (j *job) Done(ctx context.Context) error {
 	} else {
 		execSQL = doneJob
 	}
-	resultStr := ""
-	result := ctx.Value("result")
-	if result != nil {
-		resultStr = result.(string)
+	resultStr := "{}"
+	if result, ok := ctx.Value("result").(string); ok {
+		resultStr = result
 	}
 
 	_, err := j.exec(j.tx)(ctx, execSQL, resultStr, j.id)
