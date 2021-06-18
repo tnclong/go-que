@@ -23,6 +23,10 @@ create table if not exists goque_jobs
     last_err_msg   text,
     last_err_stack text,
 
+    result               jsonb                    default '{}'::jsonb not null
+        constraint result
+            check (jsonb_typeof(result) = 'object'::text),
+
     unique_id            varchar(255),
     unique_lifecycle     smallint 
         constraint valid_unique_lifecycle 
