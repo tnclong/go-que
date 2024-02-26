@@ -18,8 +18,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/tnclong/go-que"
-	"github.com/tnclong/go-que/pg"
+	"github.com/theplant/go-que"
+	"github.com/theplant/go-que/pg"
 	"gopkg.in/yaml.v2"
 )
 

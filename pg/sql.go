@@ -12,11 +12,12 @@ create table if not exists goque_jobs
     args                 jsonb                    default '[]'::jsonb not null
         constraint valid_args
             check (jsonb_typeof(args) = 'array'::text),
-
+    created_at           timestamp with time zone default now()       not null,
     run_at               timestamp with time zone default now()       not null,
     retry_policy         jsonb                                        not null,
     done_at              timestamp with time zone,
     expired_at           timestamp with time zone,
+    push_notification    text default '',
 
     retry_count          integer                  default 0           not null,
     last_err_msg   text,
@@ -26,6 +27,10 @@ create table if not exists goque_jobs
     unique_lifecycle     smallint 
         constraint valid_unique_lifecycle 
             check(unique_lifecycle>=0 AND unique_lifecycle<=3),
+
+    result               jsonb                    default '{}'::jsonb not null
+            constraint result
+                check (jsonb_typeof(result) = 'object'::text),
 
     constraint err_length
         check ((char_length(last_err_msg) <= 512) AND (char_length(last_err_stack) <= 8192))

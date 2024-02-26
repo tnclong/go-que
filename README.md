@@ -14,12 +14,12 @@ There are benefits of using Que to route jobs:
 ## Install
 
 ```bash
-go get github.com/tnclong/go-que
+go get github.com/theplant/go-que
 ```
 
 ## Doc
 
-https://godoc.org/github.com/tnclong/go-que
+https://godoc.org/github.com/theplant/go-que
 
 ## Quickstart
 

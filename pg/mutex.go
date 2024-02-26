@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnclong/go-que"
+	"github.com/theplant/go-que"
 )
 
 type mutex struct {
@@ -214,18 +214,20 @@ func (m *mutex) lockInMux(ctx context.Context, conn *sql.Conn, queue string, cou
 	if err != nil {
 		return nil, nil, err
 	}
-	var doneAt, exipredAt sql.NullTime
+	var createdAt, doneAt, exipredAt sql.NullTime
 	var locked bool
 	var remaining int
+	var pushNotification string
+	var result []byte
 	defer rows.Close()
 	for rows.Next() {
 		var jb job
 		rp := (*jsonRetryPolicy)(&jb.plan.RetryPolicy)
 		var uniqueID sql.NullString
 		err = rows.Scan(
-			&jb.id, &jb.plan.Queue, &jb.plan.Args, &jb.plan.RunAt, rp, &doneAt, &exipredAt,
+			&jb.id, &jb.plan.Queue, &jb.plan.Args, &createdAt, &jb.plan.RunAt, rp, &doneAt, &exipredAt, &pushNotification,
 			&jb.retryCount, &jb.lastErrMsg, &jb.lastErrStack,
-			&uniqueID, &jb.plan.UniqueLifecycle,
+			&uniqueID, &jb.plan.UniqueLifecycle, &result,
 			&locked, &remaining,
 		)
 		if err != nil {
