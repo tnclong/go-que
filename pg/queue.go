@@ -11,16 +11,47 @@ import (
 )
 
 func New(db *sql.DB) (que.Queue, error) {
-	if db == nil {
-		return nil, errors.New("db must not be nil")
-	}
-	if err := migrate(db); err != nil {
-		return nil, err
-	}
-	return &queue{db: db}, nil
+	return NewWithOptions(Options{DB: db, DBMigrate: true})
 }
 
-func migrate(db *sql.DB) error {
+func validateOptions(opts Options) error {
+	if opts.DB == nil {
+		return errors.New("Options.DB must not be nil")
+	}
+	return nil
+}
+
+func NewWithOptions(opts Options, optFns ...func(*Options)) (que.Queue, error) {
+	opts = opts.Copy()
+	for _, optFn := range optFns {
+		optFn(&opts)
+	}
+	if err := validateOptions(opts); err != nil {
+		return nil, err
+	}
+
+	if opts.DBMigrate {
+		if err := Migrate(opts.DB); err != nil {
+			return nil, err
+		}
+	}
+
+	return &queue{db: opts.DB}, nil
+}
+
+type Options struct {
+	DB *sql.DB
+
+	// Run database migrations
+	DBMigrate bool
+}
+
+func (o Options) Copy() Options {
+	o2 := o
+	return o2
+}
+
+func Migrate(db *sql.DB) error {
 	_, err := db.Exec(migrateSchemaSQL)
 	return err
 }
