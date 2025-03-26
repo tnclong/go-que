@@ -287,4 +287,148 @@ func TestSkipConflict(t *testing.T) {
 
 		t.Logf("Test 5 passed: Successfully handled multiple duplicate IDs in complex pattern")
 	})
+
+	// Part 7: Testing same uniqueID across multiple queues
+	dbTx(t, true, func(tx *sql.Tx) {
+		// Create a new queue name
+		qs2 := randQueue()
+
+		// We'll use the same uniqueID for both queues
+		sharedUniqueIDStr := "shared-unique-id-across-queues"
+		sharedUniqueID := &sharedUniqueIDStr
+
+		// First plan for queue 1
+		planQ1 := que.Plan{
+			Queue:           qs,
+			Args:            que.Args("job in queue 1"),
+			RunAt:           time.Now(),
+			UniqueID:        sharedUniqueID,
+			UniqueLifecycle: que.Always,
+		}
+
+		// Second plan for queue 2 with same uniqueID
+		planQ2 := que.Plan{
+			Queue:           qs2,
+			Args:            que.Args("job in queue 2"),
+			RunAt:           time.Now(),
+			UniqueID:        sharedUniqueID, // Same uniqueID but different queue
+			UniqueLifecycle: que.Always,
+		}
+
+		// Enqueue in queue 1
+		ids1, err := q.Enqueue(context.Background(), tx, planQ1)
+		if err != nil {
+			t.Fatalf("Failed to enqueue job in first queue: %v", err)
+		}
+		if len(ids1) != 1 {
+			t.Fatalf("Expected 1 ID for first queue, got %d", len(ids1))
+		}
+		if ids1[0] == que.SkippedID {
+			t.Errorf("Expected valid ID for queue 1, got SkippedID")
+		}
+		t.Logf("Successfully enqueued job in queue 1 with ID: %d", ids1[0])
+
+		// Enqueue in queue 2 with same uniqueID
+		ids2, err := q.Enqueue(context.Background(), tx, planQ2)
+		if err != nil {
+			t.Fatalf("Failed to enqueue job in second queue: %v", err)
+		}
+		if len(ids2) != 1 {
+			t.Fatalf("Expected 1 ID for second queue, got %d", len(ids2))
+		}
+		if ids2[0] == que.SkippedID {
+			t.Errorf("Expected valid ID for queue 2, got SkippedID")
+		}
+		t.Logf("Successfully enqueued job in queue 2 with ID: %d", ids2[0])
+
+		// Now try to enqueue again in both queues with same uniqueID using SkipConflict
+		ctx := que.WithSkipConflict(context.Background())
+
+		// Create plans identical to the previous ones
+		planQ1Dup := que.Plan{
+			Queue:           qs,
+			Args:            que.Args("duplicate job in queue 1"),
+			RunAt:           time.Now(),
+			UniqueID:        sharedUniqueID,
+			UniqueLifecycle: que.Always,
+		}
+
+		planQ2Dup := que.Plan{
+			Queue:           qs2,
+			Args:            que.Args("duplicate job in queue 2"),
+			RunAt:           time.Now(),
+			UniqueID:        sharedUniqueID,
+			UniqueLifecycle: que.Always,
+		}
+
+		// Create a different uniqueID for additional plans
+		anotherSharedIDStr := "another-shared-unique-id"
+		anotherSharedID := &anotherSharedIDStr
+
+		// Additional plans for both queues with new uniqueID
+		planQ1New := que.Plan{
+			Queue:           qs,
+			Args:            que.Args("new job in queue 1"),
+			RunAt:           time.Now(),
+			UniqueID:        anotherSharedID,
+			UniqueLifecycle: que.Always,
+		}
+
+		planQ2New := que.Plan{
+			Queue:           qs2,
+			Args:            que.Args("new job in queue 2"),
+			RunAt:           time.Now(),
+			UniqueID:        anotherSharedID,
+			UniqueLifecycle: que.Always,
+		}
+
+		// Another plan with same queue and uniqueID as planQ1New (should be skipped)
+		planQ1NewDup := que.Plan{
+			Queue:           qs, // Same queue as planQ1New
+			Args:            que.Args("duplicate of new job in queue 1"),
+			RunAt:           time.Now(),
+			UniqueID:        anotherSharedID, // Same uniqueID as planQ1New
+			UniqueLifecycle: que.Always,
+		}
+
+		// Test all five plans in a single call with SkipConflict
+		// - Plans 0-1: should be skipped (conflict with existing database records)
+		// - Plan 2: should be valid (new uniqueID in queue 1)
+		// - Plan 3: should be valid (new uniqueID in queue 2)
+		// - Plan 4: should be skipped (duplicate of Plan 2 in the same call)
+		ids, err := q.Enqueue(ctx, tx, planQ1Dup, planQ2Dup, planQ1New, planQ2New, planQ1NewDup)
+		if err != nil {
+			t.Fatalf("Failed to enqueue jobs with SkipConflict: %v", err)
+		}
+
+		if len(ids) != 5 {
+			t.Fatalf("Expected 5 IDs, got %d", len(ids))
+		}
+
+		// First two should be skipped since they conflict in their respective queues
+		if ids[0] != que.SkippedID {
+			t.Errorf("Expected SkippedID for duplicate in queue 1, got %d", ids[0])
+		}
+
+		if ids[1] != que.SkippedID {
+			t.Errorf("Expected SkippedID for duplicate in queue 2, got %d", ids[1])
+		}
+
+		// Plan 2 should be valid since it's the first occurrence of anotherSharedID in queue 1
+		if ids[2] == que.SkippedID {
+			t.Errorf("Expected valid ID for new job in queue 1, got SkippedID")
+		}
+
+		// Plan 3 should be valid since it's the first occurrence of anotherSharedID in queue 2
+		if ids[3] == que.SkippedID {
+			t.Errorf("Expected valid ID for new job in queue 2, got SkippedID")
+		}
+
+		// Plan 4 should be skipped as it's a duplicate of Plan 2 within the same call
+		if ids[4] != que.SkippedID {
+			t.Errorf("Expected SkippedID for duplicate of new job in queue 1, got %d", ids[4])
+		}
+
+		t.Logf("Test 6 passed: Successfully verified cross-queue uniqueID behavior")
+	})
 }
