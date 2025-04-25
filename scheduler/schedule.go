@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"errors"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/tnclong/go-que"
@@ -17,6 +18,9 @@ type Item struct {
 	Args string `yaml:"args"`
 	// See https://en.wikipedia.org/wiki/Cron or https://github.com/robfig/cron
 	Cron string `yaml:"cron"`
+	// InitiateTime defines when job scheduling should begin,
+	// preventing unexpected historical jobs on first inclusion
+	InitiateTime *time.Time `yaml:"initiateTime"`
 
 	RecoveryPolicy RecoveryPolicy `yaml:"recoveryPolicy"`
 

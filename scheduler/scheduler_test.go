@@ -62,7 +62,7 @@ func mustMarshal(e interface{}) []byte {
 }
 
 func TestSchedulerPerform(t *testing.T) {
-	var tcs = []struct {
+	tcs := []struct {
 		Name string
 
 		Provider    Provider
@@ -398,7 +398,6 @@ func TestSchedulerPerform(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func openDB(t *testing.T) *sql.DB {
@@ -421,4 +420,150 @@ func mustParseTime(str string) time.Time {
 		panic(err)
 	}
 	return d
+}
+
+func TestCalculateWithInitiateTime(t *testing.T) {
+	// Reference times for testing various scheduling scenarios
+	earlierTime := mustParseTime("2020-02-16T19:11:45+08:00")
+	midTime := mustParseTime("2020-02-16T19:12:30+08:00")
+	laterTime := mustParseTime("2020-02-16T19:13:15+08:00")
+	currentTime := mustParseTime("2020-02-16T19:14:45+08:00")
+
+	cronExactTime := mustParseTime("2020-02-16T19:13:00+08:00") // Exactly at a cron execution point
+
+	tests := []struct {
+		name         string
+		schedule     Schedule
+		args         args
+		wantPlans    int
+		wantFirstRun time.Time
+	}{
+		{
+			name: "item with InitiateTime earlier than lastRunAt",
+			schedule: Schedule{
+				"test1": Item{
+					Queue:          "test_queue",
+					Args:           `["arg1"]`,
+					Cron:           "* * * * *",
+					InitiateTime:   &midTime,
+					RecoveryPolicy: Reparation,
+				},
+			},
+			args: args{
+				lastRunAt: laterTime,
+				names:     []string{"test1"},
+			},
+			wantPlans:    1,
+			wantFirstRun: mustParseTime("2020-02-16T19:14:00+08:00"),
+		},
+		{
+			name: "item with InitiateTime later than lastRunAt",
+			schedule: Schedule{
+				"test2": Item{
+					Queue:          "test_queue",
+					Args:           `["arg1"]`,
+					Cron:           "* * * * *",
+					InitiateTime:   &laterTime,
+					RecoveryPolicy: Reparation,
+				},
+			},
+			args: args{
+				lastRunAt: earlierTime,
+				names:     []string{"test2"},
+			},
+			wantPlans:    1,
+			wantFirstRun: mustParseTime("2020-02-16T19:14:00+08:00"),
+		},
+		{
+			name: "item with nil InitiateTime",
+			schedule: Schedule{
+				"test3": Item{
+					Queue:          "test_queue",
+					Args:           `["arg1"]`,
+					Cron:           "* * * * *",
+					RecoveryPolicy: Reparation,
+				},
+			},
+			args: args{
+				lastRunAt: earlierTime,
+				names:     []string{"test3"},
+			},
+			wantPlans:    3,
+			wantFirstRun: mustParseTime("2020-02-16T19:12:00+08:00"),
+		},
+		{
+			name: "item not in args but with InitiateTime",
+			schedule: Schedule{
+				"test4": Item{
+					Queue:          "test_queue",
+					Args:           `["arg1"]`,
+					Cron:           "* * * * *",
+					InitiateTime:   &midTime,
+					RecoveryPolicy: Reparation,
+				},
+			},
+			args: args{
+				lastRunAt: earlierTime,
+				names:     []string{},
+			},
+			wantPlans:    2,
+			wantFirstRun: mustParseTime("2020-02-16T19:13:00+08:00"),
+		},
+		{
+			name: "item not in args and without InitiateTime",
+			schedule: Schedule{
+				"test5": Item{
+					Queue:          "test_queue",
+					Args:           `["arg1"]`,
+					Cron:           "* * * * *",
+					RecoveryPolicy: Reparation,
+				},
+			},
+			args: args{
+				lastRunAt: earlierTime,
+				names:     []string{},
+			},
+			wantPlans: 0,
+		},
+		{
+			name: "item with InitiateTime exactly matching a cron time",
+			schedule: Schedule{
+				"test6": Item{
+					Queue:          "test_queue",
+					Args:           `["arg1"]`,
+					Cron:           "* * * * *",
+					InitiateTime:   &cronExactTime,
+					RecoveryPolicy: Reparation,
+				},
+			},
+			args: args{
+				lastRunAt: earlierTime,
+				names:     []string{"test6"},
+			},
+			wantPlans:    2,
+			wantFirstRun: mustParseTime("2020-02-16T19:13:00+08:00"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plans := calculate(tt.schedule, currentTime, tt.args)
+
+			if got := len(plans); got != len(tt.schedule) && tt.wantPlans > 0 {
+				t.Errorf("calculate() got %v plans, want some plans", got)
+			}
+
+			for _, itemPlans := range plans {
+				if got := len(itemPlans); got != tt.wantPlans {
+					t.Errorf("calculate() got %v plans, want %v", got, tt.wantPlans)
+				}
+
+				if tt.wantPlans > 0 {
+					if !itemPlans[0].RunAt.Equal(tt.wantFirstRun) {
+						t.Errorf("First plan RunAt = %v, want %v", itemPlans[0].RunAt, tt.wantFirstRun)
+					}
+				}
+			}
+		})
+	}
 }

@@ -51,8 +51,10 @@ var retryPolicy = que.RetryPolicy{
 	MaxRetryCount:          1 << 24,
 }
 
-var uniqueID = "scheduler.enqueue.self.unique"
-var uniqueLifecycle = que.Lockable
+var (
+	uniqueID        = "scheduler.enqueue.self.unique"
+	uniqueLifecycle = que.Lockable
+)
 
 // Prepare auto schedules self in given queue at first.
 // Prepare must be called in application initializtion.
@@ -206,12 +208,20 @@ func (a args) contains(name string) bool {
 func calculate(schedule Schedule, now time.Time, args args) map[string][]que.Plan {
 	namePlans := make(map[string][]que.Plan)
 	for name, item := range schedule {
-		if !args.contains(name) {
+		initiateTimeSet := item.InitiateTime != nil && !item.InitiateTime.IsZero()
+		if !args.contains(name) && !initiateTimeSet {
 			continue
 		}
 
 		cronSc, _ := parseCron(item.Cron)
 		lastTime := args.lastRunAt
+		if initiateTimeSet {
+			// Use InitiateTime-1ns when it's later than lastRunAt to include exact cron points
+			prevTime := item.InitiateTime.Add(-1 * time.Nanosecond)
+			if prevTime.After(lastTime) {
+				lastTime = prevTime
+			}
+		}
 		var nextTimes []time.Time
 		for {
 			nextTime := cronSc.Next(lastTime)
