@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/tnclong/go-que"
+	"github.com/theplant/go-que"
 )
 
 type job struct {
@@ -51,13 +51,15 @@ func (j *job) In(tx *sql.Tx) {
 }
 
 const doneJob = `UPDATE goque_jobs
-SET done_at = now()
-WHERE id = $1::bigint`
+SET done_at = now(),
+    result = $1::jsonb
+WHERE id = $2::bigint`
 
 const doneUniqueIDJob = `UPDATE goque_jobs
 SET done_at = now(),
+    result = $1::jsonb,
     unique_id = null
-WHERE id = $1::bigint`
+WHERE id = $2::bigint`
 
 func (j *job) Done(ctx context.Context) error {
 	var execSQL string
@@ -66,7 +68,12 @@ func (j *job) Done(ctx context.Context) error {
 	} else {
 		execSQL = doneJob
 	}
-	_, err := j.exec(j.tx)(ctx, execSQL, j.id)
+	resultStr := "{}"
+	if result, ok := ctx.Value("result").(string); ok {
+		resultStr = result
+	}
+
+	_, err := j.exec(j.tx)(ctx, execSQL, resultStr, j.id)
 	return err
 }
 

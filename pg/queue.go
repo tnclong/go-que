@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tnclong/go-que"
+	"github.com/theplant/go-que"
 )
 
 func New(db *sql.DB) (que.Queue, error) {

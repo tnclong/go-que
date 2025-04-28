@@ -10,8 +10,8 @@ import (
 
 	"github.com/golang/mock/gomock"
 	_ "github.com/lib/pq"
-	"github.com/tnclong/go-que"
-	"github.com/tnclong/go-que/mock"
+	"github.com/theplant/go-que"
+	"github.com/theplant/go-que/mock"
 )
 
 func TestDecodeArgs(t *testing.T) {

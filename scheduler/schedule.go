@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	"github.com/tnclong/go-que"
+	"github.com/theplant/go-que"
 )
 
 // Schedule is a set of named items.
