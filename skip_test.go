@@ -88,13 +88,13 @@ func TestSkipConflict(t *testing.T) {
 			t.Fatalf("Expected 2 IDs, got %d", len(ids))
 		}
 
-		// First ID should be SkippedID, second should be valid
-		if ids[0] != que.SkippedID {
-			t.Errorf("Expected first ID to be SkippedID (%d), got %d", que.SkippedID, ids[0])
+		// First ID should be SkippedConflictID, second should be valid
+		if ids[0] != que.SkippedConflictID {
+			t.Errorf("Expected first ID to be SkippedConflictID (%d), got %d", que.SkippedConflictID, ids[0])
 		}
 
-		if ids[1] == que.SkippedID {
-			t.Errorf("Expected second ID to be valid, got SkippedID (%d)", que.SkippedID)
+		if ids[1] == que.SkippedConflictID {
+			t.Errorf("Expected second ID to be valid, got SkippedConflictID (%d)", que.SkippedConflictID)
 		}
 
 		t.Logf("Test 2 passed: SkipConflict correctly handled conflicting records")
@@ -142,16 +142,16 @@ func TestSkipConflict(t *testing.T) {
 			t.Fatalf("Expected 3 IDs, got %d", len(ids))
 		}
 
-		if ids[0] == que.SkippedID {
-			t.Errorf("Expected position 1 to be a valid ID, got SkippedID")
+		if ids[0] == que.SkippedConflictID {
+			t.Errorf("Expected position 1 to be a valid ID, got SkippedConflictID")
 		}
 
-		if ids[1] != que.SkippedID {
-			t.Errorf("Expected position 0 to be SkippedID (%d), got %d", que.SkippedID, ids[0])
+		if ids[1] != que.SkippedConflictID {
+			t.Errorf("Expected position 0 to be SkippedConflictID (%d), got %d", que.SkippedConflictID, ids[0])
 		}
 
-		if ids[2] == que.SkippedID {
-			t.Errorf("Expected position 2 to be a valid ID, got SkippedID")
+		if ids[2] == que.SkippedConflictID {
+			t.Errorf("Expected position 2 to be a valid ID, got SkippedConflictID")
 		}
 
 		t.Logf("Test 3 passed: Multiple test cases correctly handled")
@@ -204,18 +204,18 @@ func TestSkipConflict(t *testing.T) {
 		}
 
 		// First ID should be valid (not skipped)
-		if ids[0] == que.SkippedID {
-			t.Errorf("Expected first ID to be valid, got SkippedID")
+		if ids[0] == que.SkippedConflictID {
+			t.Errorf("Expected first ID to be valid, got SkippedConflictID")
 		}
 
 		// Second ID (duplicate) should be marked as skipped
-		if ids[1] != que.SkippedID {
-			t.Errorf("Expected second ID (duplicate) to be SkippedID, got %d", ids[1])
+		if ids[1] != que.SkippedConflictID {
+			t.Errorf("Expected second ID (duplicate) to be SkippedConflictID, got %d", ids[1])
 		}
 
 		// Third ID (random) should be valid
-		if ids[2] == que.SkippedID {
-			t.Errorf("Expected third ID to be valid, got SkippedID")
+		if ids[2] == que.SkippedConflictID {
+			t.Errorf("Expected third ID to be valid, got SkippedConflictID")
 		}
 
 		t.Logf("Test 4 passed: Successfully handled duplicate UniqueIDs within the same Enqueue call")
@@ -258,10 +258,10 @@ func TestSkipConflict(t *testing.T) {
 		// Expected results:
 		// - Position 0: Valid ID (first occurrence of id1)
 		// - Position 1: Valid ID (first occurrence of id2)
-		// - Position 2: SkippedID (duplicate of id1)
-		// - Position 3: SkippedID (duplicate of id2)
+		// - Position 2: SkippedConflictID (duplicate of id1)
+		// - Position 3: SkippedConflictID (duplicate of id2)
 		// - Position 4: Valid ID (first nil ID - always processed)
-		// - Position 5: SkippedID (duplicate of id1)
+		// - Position 5: SkippedConflictID (duplicate of id1)
 		// - Position 6: Valid ID (second nil ID - always processed)
 		expectedResults := []bool{
 			false, // Not skipped (first of id1)
@@ -275,12 +275,12 @@ func TestSkipConflict(t *testing.T) {
 
 		for i, isSkipped := range expectedResults {
 			if isSkipped {
-				if ids[i] != que.SkippedID {
-					t.Errorf("Expected position %d to be SkippedID, got %d", i, ids[i])
+				if ids[i] != que.SkippedConflictID {
+					t.Errorf("Expected position %d to be SkippedConflictID, got %d", i, ids[i])
 				}
 			} else {
-				if ids[i] == que.SkippedID {
-					t.Errorf("Expected position %d to be a valid ID, got SkippedID", i)
+				if ids[i] == que.SkippedConflictID {
+					t.Errorf("Expected position %d to be a valid ID, got SkippedConflictID", i)
 				}
 			}
 		}
@@ -323,8 +323,8 @@ func TestSkipConflict(t *testing.T) {
 		if len(ids1) != 1 {
 			t.Fatalf("Expected 1 ID for first queue, got %d", len(ids1))
 		}
-		if ids1[0] == que.SkippedID {
-			t.Errorf("Expected valid ID for queue 1, got SkippedID")
+		if ids1[0] == que.SkippedConflictID {
+			t.Errorf("Expected valid ID for queue 1, got SkippedConflictID")
 		}
 		t.Logf("Successfully enqueued job in queue 1 with ID: %d", ids1[0])
 
@@ -336,8 +336,8 @@ func TestSkipConflict(t *testing.T) {
 		if len(ids2) != 1 {
 			t.Fatalf("Expected 1 ID for second queue, got %d", len(ids2))
 		}
-		if ids2[0] == que.SkippedID {
-			t.Errorf("Expected valid ID for queue 2, got SkippedID")
+		if ids2[0] == que.SkippedConflictID {
+			t.Errorf("Expected valid ID for queue 2, got SkippedConflictID")
 		}
 		t.Logf("Successfully enqueued job in queue 2 with ID: %d", ids2[0])
 
@@ -406,27 +406,27 @@ func TestSkipConflict(t *testing.T) {
 		}
 
 		// First two should be skipped since they conflict in their respective queues
-		if ids[0] != que.SkippedID {
-			t.Errorf("Expected SkippedID for duplicate in queue 1, got %d", ids[0])
+		if ids[0] != que.SkippedConflictID {
+			t.Errorf("Expected SkippedConflictID for duplicate in queue 1, got %d", ids[0])
 		}
 
-		if ids[1] != que.SkippedID {
-			t.Errorf("Expected SkippedID for duplicate in queue 2, got %d", ids[1])
+		if ids[1] != que.SkippedConflictID {
+			t.Errorf("Expected SkippedConflictID for duplicate in queue 2, got %d", ids[1])
 		}
 
 		// Plan 2 should be valid since it's the first occurrence of anotherSharedID in queue 1
-		if ids[2] == que.SkippedID {
-			t.Errorf("Expected valid ID for new job in queue 1, got SkippedID")
+		if ids[2] == que.SkippedConflictID {
+			t.Errorf("Expected valid ID for new job in queue 1, got SkippedConflictID")
 		}
 
 		// Plan 3 should be valid since it's the first occurrence of anotherSharedID in queue 2
-		if ids[3] == que.SkippedID {
-			t.Errorf("Expected valid ID for new job in queue 2, got SkippedID")
+		if ids[3] == que.SkippedConflictID {
+			t.Errorf("Expected valid ID for new job in queue 2, got SkippedConflictID")
 		}
 
 		// Plan 4 should be skipped as it's a duplicate of Plan 2 within the same call
-		if ids[4] != que.SkippedID {
-			t.Errorf("Expected SkippedID for duplicate of new job in queue 1, got %d", ids[4])
+		if ids[4] != que.SkippedConflictID {
+			t.Errorf("Expected SkippedConflictID for duplicate of new job in queue 1, got %d", ids[4])
 		}
 
 		t.Logf("Test 6 passed: Successfully verified cross-queue uniqueID behavior")

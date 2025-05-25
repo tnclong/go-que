@@ -120,7 +120,7 @@ func (q *queue) Enqueue(ctx context.Context, tx *sql.Tx, plans ...que.Plan) (ids
 			processedIdx := 0
 			for i := range plans {
 				if skippedIndexes[i] {
-					finalIDs[i] = que.SkippedID
+					finalIDs[i] = que.SkippedConflictID
 				} else {
 					finalIDs[i] = processedIDs[processedIdx]
 					processedIdx++
@@ -138,7 +138,7 @@ var (
 	sqlStandardReturning = " RETURNING id"
 
 	sqlSkipConflictReturning = " ON CONFLICT (queue, unique_id) DO UPDATE SET id = goque_jobs.id" +
-		fmt.Sprintf(" RETURNING CASE WHEN xmax = 0 THEN id ELSE %d END AS id", que.SkippedID)
+		fmt.Sprintf(" RETURNING CASE WHEN xmax = 0 THEN id ELSE %d END AS id", que.SkippedConflictID)
 
 	growDelta = len(sqlSkipConflictReturning) - len(sqlStandardReturning)
 )
