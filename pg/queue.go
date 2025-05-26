@@ -67,29 +67,109 @@ func (q *queue) Enqueue(ctx context.Context, tx *sql.Tx, plans ...que.Plan) (ids
 		return nil, nil
 	}
 
+	// Normalize all plans first
+	for i := range plans {
+		if err := normalize(&plans[i]); err != nil {
+			return nil, err
+		}
+	}
+
+	skipConflict := que.ShouldSkipConflict(ctx)
+
+	// Handle duplicate UniqueIDs in same request to avoid PostgreSQL error
+	// "ON CONFLICT DO UPDATE command cannot affect row a second time"
+	if skipConflict {
+		type compositeKey struct {
+			queue    string
+			uniqueID string
+		}
+
+		uniquePlans := make([]que.Plan, 0, len(plans))
+		seenKeys := make(map[compositeKey]bool)
+		skippedIndexes := make(map[int]bool)
+
+		for i, plan := range plans {
+			// Plans with Ignore lifecycle or nil UniqueID always get processed
+			if plan.UniqueLifecycle == que.Ignore || plan.UniqueID == nil {
+				uniquePlans = append(uniquePlans, plan)
+				continue
+			}
+
+			key := compositeKey{
+				queue:    plan.Queue,
+				uniqueID: *plan.UniqueID,
+			}
+
+			if seenKeys[key] {
+				skippedIndexes[i] = true
+				continue
+			}
+
+			seenKeys[key] = true
+			uniquePlans = append(uniquePlans, plan)
+		}
+
+		// If we found duplicates, prepare the result
+		if len(skippedIndexes) > 0 {
+			processedIDs, err := q.doEnqueue(ctx, tx, skipConflict, uniquePlans...)
+			if err != nil {
+				return nil, err
+			}
+
+			finalIDs := make([]int64, len(plans))
+			processedIdx := 0
+			for i := range plans {
+				if skippedIndexes[i] {
+					finalIDs[i] = que.SkippedConflictID
+				} else {
+					finalIDs[i] = processedIDs[processedIdx]
+					processedIdx++
+				}
+			}
+
+			return finalIDs, nil
+		}
+	}
+
+	return q.doEnqueue(ctx, tx, skipConflict, plans...)
+}
+
+var (
+	sqlStandardReturning = " RETURNING id"
+
+	sqlSkipConflictReturning = " ON CONFLICT (queue, unique_id) DO UPDATE SET id = goque_jobs.id" +
+		fmt.Sprintf(" RETURNING CASE WHEN xmax = 0 THEN id ELSE %d END AS id", que.SkippedConflictID)
+
+	growDelta = len(sqlSkipConflictReturning) - len(sqlStandardReturning)
+)
+
+func (q *queue) doEnqueue(ctx context.Context, tx *sql.Tx, skipConflict bool, plans ...que.Plan) (ids []int64, err error) {
 	const values = "($%d::text, $%d::timestamptz, $%d::jsonb, $%d::jsonb, $%d, $%d::smallint)"
 	args := make([]interface{}, 0, 6*len(plans))
 	var b strings.Builder
 	b.WriteString("INSERT INTO goque_jobs(queue, run_at, args, retry_policy, unique_id, unique_lifecycle) VALUES ")
 	n := (len(values)+2)*len(plans) + 13
+	if skipConflict {
+		n += growDelta
+	}
 	b.Grow(n)
 	fmt.Fprintf(&b, values, 1, 2, 3, 4, 5, 6)
 	plan := plans[0]
-	if err := normalize(&plan); err != nil {
-		return nil, err
-	}
 	args = append(args, plan.Queue, plan.RunAt, plan.Args, jsonRetryPolicy(plan.RetryPolicy), plan.UniqueID, plan.UniqueLifecycle)
 	i := 7
 	for _, plan = range plans[1:] {
 		b.WriteString(", ")
 		fmt.Fprintf(&b, values, i, i+1, i+2, i+3, i+4, i+5)
 		i += 6
-		if err := normalize(&plan); err != nil {
-			return nil, err
-		}
 		args = append(args, plan.Queue, plan.RunAt, plan.Args, jsonRetryPolicy(plan.RetryPolicy), plan.UniqueID, plan.UniqueLifecycle)
 	}
-	b.WriteString(" RETURNING id")
+
+	if skipConflict {
+		b.WriteString(sqlSkipConflictReturning)
+	} else {
+		b.WriteString(sqlStandardReturning)
+	}
+
 	rows, err := q.query(tx)(ctx, b.String(), args...)
 	if err != nil {
 		if strings.HasSuffix(err.Error(), `unique constraint "goque_jobs_unique_uidx"`) {
